@@ -443,9 +443,18 @@ def read_root():
 async def scrape_property_endpoint(request: PropertyRequest):
     """Scrape property data from county and Zillow"""
     try:
+        # Debug: Check what methods are available on airtop_client
+        if airtop_client:
+            print(f"Airtop client type: {type(airtop_client)}")
+            print(f"Airtop client methods: {[method for method in dir(airtop_client) if not method.startswith('_')]}")
+        
         property_data = await scrape_property(request.address)
         return property_data
     except Exception as e:
+        print(f"Scrape property error: {str(e)}")
+        print(f"Error type: {type(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/generate-loi")
@@ -520,6 +529,37 @@ def health_check():
         },
         "mode": "airtop_browser_automation"
     }
+
+# Test Airtop API endpoint
+@app.get("/test-airtop")
+async def test_airtop():
+    """Test Airtop API directly"""
+    try:
+        if not airtop_client:
+            return {"error": "Airtop client not initialized"}
+        
+        # Check what methods are available
+        methods = [method for method in dir(airtop_client) if not method.startswith('_')]
+        
+        # Try a simple test
+        try:
+            result = await airtop_client.run("Navigate to https://www.google.com")
+            return {
+                "airtop_type": str(type(airtop_client)),
+                "available_methods": methods,
+                "test_result": str(result),
+                "test_success": True
+            }
+        except Exception as e:
+            return {
+                "airtop_type": str(type(airtop_client)),
+                "available_methods": methods,
+                "test_error": str(e),
+                "test_success": False
+            }
+            
+    except Exception as e:
+        return {"error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
