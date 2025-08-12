@@ -1,7 +1,470 @@
-from fastapi import FastAPI
+# main.py - Complete LangChain Property Scraper System
 
-app = FastAPI()
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from typing import List, Dict, Optional
+import asyncio
+import aiohttp
+from datetime import datetime
+import json
+import os
+import re
+from docx import Document
+from docxtpl import DocxTemplate
+import tempfile
+import zipfile
+from pathlib import Path
 
+# LangChain imports
+from langchain.agents import create_openai_functions_agent, AgentExecutor
+from langchain.tools import tool
+from langchain_openai import ChatOpenAI
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_community.document_loaders import AsyncHtmlLoader
+from langchain_community.document_transformers import Html2TextTransformer
+
+# Airtop browser automation
+from airtop import Airtop
+
+app = FastAPI(title="LOI Generator - LangChain Edition")
+
+# Initialize API clients
+OPENAI_KEY = "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"
+AIRTOP_KEY = "e1ad2bd816a5a93e.mcd8Fnus0p8UMOJvGZvMdB132O4jRyJ8A5hOTGZFXL"
+
+# Initialize LLM
+llm = ChatOpenAI(
+    api_key=OPENAI_KEY,
+    model="gpt-4o-mini",
+    temperature=0
+)
+
+# Initialize Airtop
+airtop_client = Airtop(api_key=AIRTOP_KEY)
+
+# Simple in-memory cache
+property_cache = {}
+
+# Request models
+class PropertyRequest(BaseModel):
+    address: str
+    
+class BatchRequest(BaseModel):
+    addresses: List[str]
+    email: Optional[str] = None
+
+# Response models
+class PropertyData(BaseModel):
+    address: str
+    owner_name: str
+    owner_mailing_address: str
+    listing_price: float
+    last_sale_price: Optional[float]
+    property_details: Dict
+    calculations: Dict
+    scraped_at: datetime
+
+# County Scraper Agent
+class CountyScraperAgent:
+    def __init__(self):
+        self.airtop = airtop_client
+        
+    async def scrape_fulton_county(self, address: str) -> Dict:
+        """Scrapes Fulton County, GA assessor for owner info"""
+        try:
+            # Create browser session
+            session = await self.airtop.create_session()
+            
+            # Navigate to Fulton County assessor
+            await session.navigate_to("https://qpublic.schneidercorp.com/Application.aspx?App=FultonCountyGA&Layer=Parcels&PageType=Search")
+            
+            # Accept terms if present
+            try:
+                await session.click("button[contains(text(), 'Accept')]", timeout=5000)
+            except:
+                pass
+            
+            # Search for property
+            await session.type("#ctlBodyPane_ctl01_ctl01_txtAddress", address)
+            await session.click("#ctlBodyPane_ctl01_ctl01_btnSearch")
+            await session.wait_for_selector(".search-results", timeout=10000)
+            
+            # Click first result
+            await session.click(".search-results tr:nth-child(2) a")
+            await session.wait_for_selector("#ctlBodyPane_ctl00_lblOwner", timeout=10000)
+            
+            # Extract owner info
+            owner_name = await session.get_text("#ctlBodyPane_ctl00_lblOwner")
+            mailing_address = await session.get_text("#ctlBodyPane_ctl00_lblMailingAddress")
+            
+            # Extract property details
+            parcel_id = await session.get_text("#ctlBodyPane_ctl00_lblParcelID")
+            property_class = await session.get_text("#ctlBodyPane_ctl00_lblPropertyClass")
+            
+            await session.close()
+            
+            return {
+                "owner_name": owner_name.strip(),
+                "owner_mailing_address": mailing_address.strip(),
+                "parcel_id": parcel_id.strip(),
+                "property_class": property_class.strip(),
+                "source": "Fulton County Assessor"
+            }
+            
+        except Exception as e:
+            print(f"Fulton scraping error: {str(e)}")
+            return None
+    
+    async def scrape_la_county(self, address: str) -> Dict:
+        """Scrapes LA County assessor for owner info"""
+        try:
+            session = await self.airtop.create_session()
+            
+            # Navigate to LA County assessor
+            await session.navigate_to("https://assessor.lacounty.gov/")
+            
+            # Use property search
+            await session.click("a[contains(text(), 'Property Search')]")
+            await session.wait_for_navigation()
+            
+            # Enter address
+            await session.type("#address", address)
+            await session.click("#searchButton")
+            await session.wait_for_selector(".results-table", timeout=10000)
+            
+            # Click first result
+            await session.click(".results-table tr:nth-child(1) a")
+            await session.wait_for_selector(".property-details", timeout=10000)
+            
+            # Extract owner info
+            owner_name = await session.get_text(".owner-name")
+            mailing_address = await session.get_text(".mailing-address")
+            
+            await session.close()
+            
+            return {
+                "owner_name": owner_name.strip(),
+                "owner_mailing_address": mailing_address.strip(),
+                "source": "LA County Assessor"
+            }
+            
+        except Exception as e:
+            print(f"LA County scraping error: {str(e)}")
+            return None
+
+# Zillow Scraper Agent  
+class ZillowScraperAgent:
+    def __init__(self):
+        self.airtop = airtop_client
+        
+    async def get_listing_price(self, address: str) -> Dict:
+        """Scrapes Zillow for current listing price"""
+        try:
+            session = await self.airtop.create_session()
+            
+            # Navigate to Zillow
+            await session.navigate_to("https://www.zillow.com/")
+            
+            # Search for address
+            await session.type("input[placeholder*='address']", address)
+            await session.press("Enter")
+            await session.wait_for_navigation()
+            
+            # Wait for and extract price
+            await session.wait_for_selector("[data-test='property-card-price']", timeout=10000)
+            price_text = await session.get_text("[data-test='property-card-price']")
+            
+            # Extract property details
+            details = {}
+            try:
+                details['bedrooms'] = await session.get_text("[data-test='property-card-bed']")
+                details['bathrooms'] = await session.get_text("[data-test='property-card-bath']")
+                details['sqft'] = await session.get_text("[data-test='property-card-sqft']")
+            except:
+                pass
+            
+            await session.close()
+            
+            # Parse price
+            price = float(re.sub(r'[^\d]', '', price_text))
+            
+            return {
+                "listing_price": price,
+                "property_details": details,
+                "source": "Zillow"
+            }
+            
+        except Exception as e:
+            print(f"Zillow scraping error: {str(e)}")
+            return None
+
+# LOI Calculator
+class LOICalculator:
+    @staticmethod
+    def calculate_offer(listing_price: float, strategy: str = "standard") -> Dict:
+        """Calculate offer price and terms based on listing price"""
+        
+        calculations = {
+            "listing_price": listing_price,
+            "offer_price": listing_price * 0.9,  # 90% of asking
+            "earnest_money": listing_price * 0.01,  # 1% earnest money
+            "down_payment": listing_price * 0.2,  # 20% down
+            "loan_amount": listing_price * 0.72,  # 80% of offer price
+        }
+        
+        # Estimate rent (rough calculation - 0.8-1% of value)
+        calculations["estimated_monthly_rent"] = listing_price * 0.009
+        
+        # Calculate cap rate
+        annual_rent = calculations["estimated_monthly_rent"] * 12
+        calculations["cap_rate"] = (annual_rent / calculations["offer_price"]) * 100
+        
+        # Cash flow estimate (assuming 50% expense ratio)
+        calculations["estimated_cash_flow"] = calculations["estimated_monthly_rent"] * 0.5
+        
+        return calculations
+
+# Document Generator
+class DocumentGenerator:
+    @staticmethod
+    def create_loi_docx(property_data: PropertyData) -> str:
+        """Generate LOI document in .docx format"""
+        
+        # Create document from template (or create new one)
+        doc = Document()
+        
+        # Add title
+        doc.add_heading('LETTER OF INTENT TO PURCHASE REAL ESTATE', 0)
+        doc.add_paragraph(f'Date: {datetime.now().strftime("%B %d, %Y")}')
+        doc.add_paragraph()
+        
+        # Add recipient (owner info)
+        doc.add_paragraph('To:')
+        doc.add_paragraph(f'{property_data.owner_name}')
+        doc.add_paragraph(f'{property_data.owner_mailing_address}')
+        doc.add_paragraph()
+        
+        # Add property info
+        doc.add_paragraph('RE: Letter of Intent to Purchase')
+        doc.add_paragraph(f'Property Address: {property_data.address}')
+        doc.add_paragraph()
+        
+        # Add offer details
+        doc.add_paragraph('Dear Property Owner,')
+        doc.add_paragraph()
+        
+        doc.add_paragraph(
+            f'I am pleased to submit this Letter of Intent to purchase the above-referenced property '
+            f'under the following terms and conditions:'
+        )
+        doc.add_paragraph()
+        
+        # Terms
+        doc.add_heading('TERMS AND CONDITIONS:', level=1)
+        
+        # Purchase Price
+        doc.add_paragraph(f'1. PURCHASE PRICE: ${property_data.calculations["offer_price"]:,.2f}')
+        doc.add_paragraph()
+        
+        # Earnest Money
+        doc.add_paragraph(f'2. EARNEST MONEY: ${property_data.calculations["earnest_money"]:,.2f} '
+                         f'to be deposited within 3 business days of acceptance')
+        doc.add_paragraph()
+        
+        # Due Diligence
+        doc.add_paragraph('3. DUE DILIGENCE PERIOD: Forty-five (45) days from acceptance')
+        doc.add_paragraph()
+        
+        # Financing
+        doc.add_paragraph(f'4. FINANCING: Buyer to obtain financing for ${property_data.calculations["loan_amount"]:,.2f}')
+        doc.add_paragraph()
+        
+        # Closing
+        doc.add_paragraph('5. CLOSING: Within 60 days from acceptance or sooner')
+        doc.add_paragraph()
+        
+        # Contingencies
+        doc.add_paragraph('6. CONTINGENCIES:')
+        doc.add_paragraph('   a. Satisfactory property inspection')
+        doc.add_paragraph('   b. Satisfactory environmental assessment')
+        doc.add_paragraph('   c. Acceptable financing terms')
+        doc.add_paragraph('   d. Clear and marketable title')
+        doc.add_paragraph()
+        
+        # Additional Terms
+        doc.add_paragraph('7. ADDITIONAL TERMS:')
+        doc.add_paragraph('   a. Seller to provide all property records during due diligence')
+        doc.add_paragraph('   b. Property to be delivered in broom-clean condition')
+        doc.add_paragraph('   c. All systems and appliances in working order')
+        doc.add_paragraph()
+        
+        # Investment Analysis (if applicable)
+        if property_data.calculations.get("cap_rate"):
+            doc.add_heading('INVESTMENT ANALYSIS:', level=1)
+            doc.add_paragraph(f'Estimated Monthly Rent: ${property_data.calculations["estimated_monthly_rent"]:,.2f}')
+            doc.add_paragraph(f'Estimated Cap Rate: {property_data.calculations["cap_rate"]:.2f}%')
+            doc.add_paragraph(f'Estimated Cash Flow: ${property_data.calculations["estimated_cash_flow"]:,.2f}/month')
+            doc.add_paragraph()
+        
+        # Signature section
+        doc.add_paragraph('This Letter of Intent is non-binding and subject to the execution of a '
+                         'formal Purchase and Sale Agreement acceptable to both parties.')
+        doc.add_paragraph()
+        doc.add_paragraph('Sincerely,')
+        doc.add_paragraph()
+        doc.add_paragraph('_______________________________')
+        doc.add_paragraph('[Your Name]')
+        doc.add_paragraph('[Your Company]')
+        doc.add_paragraph('[Phone]')
+        doc.add_paragraph('[Email]')
+        
+        # Save to temp file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.docx')
+        doc.save(temp_file.name)
+        temp_file.close()
+        
+        return temp_file.name
+
+# Main scraping orchestrator
+async def scrape_property(address: str) -> PropertyData:
+    """Main function to scrape all property data"""
+    
+    # Check cache first
+    if address in property_cache:
+        cached_data = property_cache[address]
+        if (datetime.now() - cached_data.scraped_at).days < 7:
+            return cached_data
+    
+    # Determine county based on address
+    county_scraper = CountyScraperAgent()
+    zillow_scraper = ZillowScraperAgent()
+    
+    # Parallel scraping
+    if "GA" in address or "Georgia" in address:
+        owner_task = county_scraper.scrape_fulton_county(address)
+    elif "CA" in address or "California" in address:
+        owner_task = county_scraper.scrape_la_county(address)
+    else:
+        raise ValueError("Currently only supporting GA and CA properties")
+    
+    price_task = zillow_scraper.get_listing_price(address)
+    
+    # Wait for both
+    owner_info, price_info = await asyncio.gather(owner_task, price_task)
+    
+    if not owner_info:
+        raise HTTPException(status_code=404, detail="Could not find owner information")
+    
+    if not price_info:
+        price_info = {"listing_price": 0, "property_details": {}}
+    
+    # Calculate offer terms
+    calculations = LOICalculator.calculate_offer(price_info["listing_price"])
+    
+    # Create property data object
+    property_data = PropertyData(
+        address=address,
+        owner_name=owner_info["owner_name"],
+        owner_mailing_address=owner_info["owner_mailing_address"],
+        listing_price=price_info["listing_price"],
+        last_sale_price=None,
+        property_details=price_info.get("property_details", {}),
+        calculations=calculations,
+        scraped_at=datetime.now()
+    )
+    
+    # Cache it
+    property_cache[address] = property_data
+    
+    return property_data
+
+# API Endpoints
 @app.get("/")
-async def root():
-    return {"greeting": "Hello, World!", "message": "Welcome to FastAPI!"}
+def read_root():
+    return {
+        "service": "LOI Generator - LangChain Edition",
+        "endpoints": [
+            "/scrape-property",
+            "/generate-loi",
+            "/batch-process"
+        ]
+    }
+
+@app.post("/scrape-property")
+async def scrape_property_endpoint(request: PropertyRequest):
+    """Scrape property data from county and Zillow"""
+    try:
+        property_data = await scrape_property(request.address)
+        return property_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate-loi")
+async def generate_loi_endpoint(request: PropertyRequest):
+    """Generate LOI document for a property"""
+    try:
+        # Get property data
+        property_data = await scrape_property(request.address)
+        
+        # Generate document
+        doc_path = DocumentGenerator.create_loi_docx(property_data)
+        
+        # Return file
+        filename = f"LOI_{request.address.replace(' ', '_').replace(',', '')}.docx"
+        return FileResponse(
+            doc_path,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename=filename
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/batch-process")
+async def batch_process_endpoint(request: BatchRequest):
+    """Process multiple properties and return ZIP"""
+    try:
+        # Create temp directory for files
+        temp_dir = tempfile.mkdtemp()
+        doc_files = []
+        
+        # Process each address
+        for address in request.addresses:
+            try:
+                property_data = await scrape_property(address)
+                doc_path = DocumentGenerator.create_loi_docx(property_data)
+                
+                # Move to temp dir with proper name
+                filename = f"LOI_{address.replace(' ', '_').replace(',', '')}.docx"
+                new_path = os.path.join(temp_dir, filename)
+                os.rename(doc_path, new_path)
+                doc_files.append(new_path)
+                
+            except Exception as e:
+                print(f"Error processing {address}: {str(e)}")
+                continue
+        
+        # Create ZIP file
+        zip_path = os.path.join(temp_dir, "LOI_Package.zip")
+        with zipfile.ZipFile(zip_path, 'w') as zipf:
+            for doc_file in doc_files:
+                zipf.write(doc_file, os.path.basename(doc_file))
+        
+        # Return ZIP file
+        return FileResponse(
+            zip_path,
+            media_type="application/zip",
+            filename=f"LOI_Package_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Health check endpoint
+@app.get("/health")
+def health_check():
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
