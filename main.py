@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional
 import asyncio
 import aiohttp
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import os
 import re
@@ -18,6 +18,8 @@ from docxtpl import DocxTemplate
 import tempfile
 import zipfile
 from pathlib import Path
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Inches, Pt, Inches
 
 # LangChain imports
 from langchain.agents import create_openai_functions_agent, AgentExecutor
@@ -345,95 +347,107 @@ class LOICalculator:
 class DocumentGenerator:
     @staticmethod
     def create_loi_docx(property_data: PropertyData) -> str:
-        """Generate LOI document in .docx format"""
+        """Generate LOI document in .docx format with professional formatting"""
         
-        # Create document from template (or create new one)
+        # Create document
         doc = Document()
         
-        # Add title
-        doc.add_heading('LETTER OF INTENT TO PURCHASE REAL ESTATE', 0)
-        doc.add_paragraph(f'Date: {datetime.now().strftime("%B %d, %Y")}')
-        doc.add_paragraph()
+        # Format date to M/DD/YYYY
+        today = datetime.now().strftime("%-m/%-d/%Y")
+        accept_by = (datetime.now() + timedelta(days=7)).strftime("%-m/%-d/%Y")
         
-        # Add recipient (owner info)
-        doc.add_paragraph('To:')
-        doc.add_paragraph(f'{property_data.owner_name}')
-        doc.add_paragraph(f'{property_data.owner_mailing_address}')
-        doc.add_paragraph()
+        # Calculate additional fields needed for the template
+        price = property_data.calculations["offer_price"]
+        financing = property_data.calculations["loan_amount"]
+        earnest1 = property_data.calculations["earnest_money"]
+        earnest2 = earnest1 * 2  # Second earnest payment
+        total_earnest = earnest1 + earnest2
         
-        # Add property info
-        doc.add_paragraph('RE: Letter of Intent to Purchase')
-        doc.add_paragraph(f'Property Address: {property_data.address}')
-        doc.add_paragraph()
+        # Default buyer entity if not provided
+        buyer_entity = "Your Investment Company LLC"
         
-        # Add offer details
-        doc.add_paragraph('Dear Property Owner,')
-        doc.add_paragraph()
+        # Add title with professional formatting
+        title = doc.add_heading('Letter of Intent', 0)
+        title.alignment = 1  # Center alignment
+        title.style.font.size = Pt(14)
+        title.style.font.bold = True
         
-        doc.add_paragraph(
-            f'I am pleased to submit this Letter of Intent to purchase the above-referenced property '
-            f'under the following terms and conditions:'
-        )
-        doc.add_paragraph()
+        # Add date
+        doc.add_paragraph(f'DATE: {today}')
         
-        # Terms
-        doc.add_heading('TERMS AND CONDITIONS:', level=1)
+        # Add purchaser
+        doc.add_paragraph(f'Purchaser: {buyer_entity}')
         
-        # Purchase Price
-        doc.add_paragraph(f'1. PURCHASE PRICE: ${property_data.calculations["offer_price"]:,.2f}')
-        doc.add_paragraph()
+        # Add property reference
+        prop_ref = doc.add_heading(f'RE: {property_data.address} ("the Property")', level=1)
+        prop_ref.style.font.size = Pt(11)
+        prop_ref.style.font.bold = True
         
-        # Earnest Money
-        doc.add_paragraph(f'2. EARNEST MONEY: ${property_data.calculations["earnest_money"]:,.2f} '
-                         f'to be deposited within 3 business days of acceptance')
-        doc.add_paragraph()
+        # Add introduction
+        doc.add_paragraph('This non-binding letter represents Purchaser\'s intent to purchase the above captioned property (the "Property") including the land and improvements on the following terms and conditions:')
         
-        # Due Diligence
-        doc.add_paragraph('3. DUE DILIGENCE PERIOD: Forty-five (45) days from acceptance')
-        doc.add_paragraph()
+        # Create professional table for terms
+        table = doc.add_table(rows=0, cols=2)
+        table.style = 'Table Grid'
+        table.autofit = False
+        table.allow_autofit = False
         
-        # Financing
-        doc.add_paragraph(f'4. FINANCING: Buyer to obtain financing for ${property_data.calculations["loan_amount"]:,.2f}')
-        doc.add_paragraph()
+        # Set column widths
+        table.columns[0].width = Inches(1.5)
+        table.columns[1].width = Inches(5.0)
         
-        # Closing
-        doc.add_paragraph('5. CLOSING: Within 60 days from acceptance or sooner')
-        doc.add_paragraph()
+        # Add terms rows
+        def add_term_row(label, content):
+            row = table.add_row()
+            row.cells[0].text = label
+            row.cells[1].text = content
+            # Make label bold
+            for paragraph in row.cells[0].paragraphs:
+                for run in paragraph.runs:
+                    run.bold = True
         
-        # Contingencies
-        doc.add_paragraph('6. CONTINGENCIES:')
-        doc.add_paragraph('   a. Satisfactory property inspection')
-        doc.add_paragraph('   b. Satisfactory environmental assessment')
-        doc.add_paragraph('   c. Acceptable financing terms')
-        doc.add_paragraph('   d. Clear and marketable title')
-        doc.add_paragraph()
+        def add_indent_row(content):
+            row = table.add_row()
+            row.cells[0].text = ""
+            row.cells[1].text = content
+            # Indent the content
+            row.cells[1].paragraphs[0].paragraph_format.left_indent = Inches(0.5)
         
-        # Additional Terms
-        doc.add_paragraph('7. ADDITIONAL TERMS:')
-        doc.add_paragraph('   a. Seller to provide all property records during due diligence')
-        doc.add_paragraph('   b. Property to be delivered in broom-clean condition')
-        doc.add_paragraph('   c. All systems and appliances in working order')
-        doc.add_paragraph()
+        # Add all the terms
+        add_term_row("Price:", f"${price:,.0f}")
+        add_term_row("Financing:", f"Purchaser intends to obtain a loan of roughly ${financing:,.2f} commercial financing priced at prevailing interest rates.")
+        add_term_row("Earnest Money:", f"Concurrently with full execution of a Purchase & Sale Agreement, Purchaser shall make an earnest money deposit (\"The Initial Deposit\") with a mutually agreed upon escrow agent in the amount of USD ${earnest1:,.1f} to be held in escrow and applied to the purchase price at closing. On expiration of the Due Diligence, Purchaser will pay a further ${earnest2:,.1f} deposit towards the purchase price and the combined ${total_earnest:,.0f} will be fully non-refundable.")
+        add_term_row("Due Diligence:", "Purchaser shall have 45 calendar days due diligence period from the time of the execution of a formal Purchase and Sale Agreement and receipt of relevant documents.")
+        add_indent_row("Seller to provide all books and records within 3 business day of effective contract date, including HOA resale certificates, property disclosures, 3 years of financial statements, pending litigation, and all documentation related to sewage intrusion.")
+        add_term_row("Title Contingency:", "Seller shall be ready, willing and able to deliver free and clear title to the Property at closing, subject to standard title exceptions acceptable to Purchaser.")
+        add_indent_row("Purchaser to select title and escrow companies.")
+        add_term_row("Appraisal Contingency:", "None")
+        add_term_row("Buyer Contingency:", "Purchaser's obligation to purchase is contingent upon Purchaser's successful sale of its Ohio property as part of a Section 1031 like-kind exchange, with Seller agreeing to reasonably cooperate (at no additional cost or liability to Seller).")
+        add_indent_row("Purchaser's obligation to purchase is contingent upon HOA approval of bulk sale.")
+        add_term_row("Closing:", "Closing shall occur after completion of due diligence period on a date agreed to by Purchaser and Seller and further detailed in the Purchase and Sale Agreement. Closing shall not take place any sooner that 45 days from the execution of a formal Purchase and Sale Agreement.")
+        add_indent_row("Purchaser and Seller agree to a one (1) time 15-day optional extension for closing.")
+        add_term_row("Closing Costs:", "Purchaser shall pay the cost of obtaining a title commitment and an owner's policy of title insurance.")
+        add_indent_row("Seller shall pay for documentary stamps on the deed conveying the Property to Purchaser.")
+        add_indent_row("Seller and Listing Broker to execute a valid Brokerage Referral Agreement with Buyer's brokerage providing for 3% commission payable to Buyer's Brokerage.")
+        add_term_row("Purchase Contract:", "Pending receipt of sufficient information from Seller, Purchaser shall have (5) business days from mutual execution of this Letter of Intent agreement to submit a purchase and sale agreement.")
         
-        # Investment Analysis (if applicable)
-        if property_data.calculations.get("cap_rate"):
-            doc.add_heading('INVESTMENT ANALYSIS:', level=1)
-            doc.add_paragraph(f'Estimated Monthly Rent: ${property_data.calculations["estimated_monthly_rent"]:,.2f}')
-            doc.add_paragraph(f'Estimated Cap Rate: {property_data.calculations["cap_rate"]:.2f}%')
-            doc.add_paragraph(f'Estimated Cash Flow: ${property_data.calculations["estimated_cash_flow"]:,.2f}/month')
-            doc.add_paragraph()
+        # Add closing paragraph
+        doc.add_paragraph(f'This letter of intent is not intended to create a binding agreement on the Seller to sell or the Purchaser to buy. The purpose of this letter is to set forth the primary terms and conditions upon which to execute a formal Purchase and Sale Agreement. All other terms and conditions shall be negotiated in the formal Purchase and Sale Agreement. This letter of Intent is open for acceptance through {accept_by}.')
         
-        # Signature section
-        doc.add_paragraph('This Letter of Intent is non-binding and subject to the execution of a '
-                         'formal Purchase and Sale Agreement acceptable to both parties.')
-        doc.add_paragraph()
-        doc.add_paragraph('Sincerely,')
-        doc.add_paragraph()
-        doc.add_paragraph('_______________________________')
-        doc.add_paragraph('[Your Name]')
-        doc.add_paragraph('[Your Company]')
-        doc.add_paragraph('[Phone]')
-        doc.add_paragraph('[Email]')
+        # Add signature block
+        doc.add_paragraph("PURCHASER: " + buyer_entity)
+        doc.add_paragraph("")
+        doc.add_paragraph("By: _____________________________________ Date:________________")
+        doc.add_paragraph("Name: _________________________________________________")
+        doc.add_paragraph("")
+        doc.add_paragraph("Agreed and Accepted:")
+        doc.add_paragraph("")
+        doc.add_paragraph("SELLER: " + property_data.owner_name)
+        doc.add_paragraph("")
+        doc.add_paragraph("")
+        doc.add_paragraph("By: _____________________________________ Date:________________")
+        doc.add_paragraph("Name: _________________________________________________")
+        doc.add_paragraph("Title: __________________________________________________")
         
         # Save to temp file
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.docx')
@@ -524,13 +538,13 @@ async def generate_loi_endpoint(request: PropertyRequest):
         # Get property data
         property_data = await scrape_property(request.address)
         
-        # Generate document
-        doc_path = DocumentGenerator.create_loi_docx(property_data)
+        # Generate Word document
+        docx_path = DocumentGenerator.create_loi_docx(property_data)
         
-        # Return file
+        # Return Word document file
         filename = f"LOI_{request.address.replace(' ', '_').replace(',', '')}.docx"
         return FileResponse(
-            doc_path,
+            docx_path,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             filename=filename
         )
@@ -549,12 +563,12 @@ async def batch_process_endpoint(request: BatchRequest):
         for address in request.addresses:
             try:
                 property_data = await scrape_property(address)
-                doc_path = DocumentGenerator.create_loi_docx(property_data)
+                docx_path = DocumentGenerator.create_loi_docx(property_data)
                 
-                # Move to temp dir with proper name
+                # Save HTML to a temporary file
                 filename = f"LOI_{address.replace(' ', '_').replace(',', '')}.docx"
                 new_path = os.path.join(temp_dir, filename)
-                os.rename(doc_path, new_path)
+                os.rename(docx_path, new_path) # Rename the temporary file to the desired name
                 doc_files.append(new_path)
                 
             except Exception as e:
