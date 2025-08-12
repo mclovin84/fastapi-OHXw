@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 import asyncio
@@ -28,6 +29,15 @@ from langchain_community.document_transformers import Html2TextTransformer
 from airtop import Airtop
 
 app = FastAPI(title="LOI Generator - LangChain Edition")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Get API keys from environment variables
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
@@ -531,3 +541,4 @@ def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+    
