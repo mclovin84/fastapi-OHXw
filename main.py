@@ -1,6 +1,5 @@
 # main.py - Complete LangChain Property Scraper System
 
-import os
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -30,9 +29,15 @@ from airtop import Airtop
 
 app = FastAPI(title="LOI Generator - LangChain Edition")
 
-# Initialize API clients
+# Get API keys from environment variables
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 AIRTOP_KEY = os.getenv("AIRTOP_API_KEY")
+
+# Validate API keys exist
+if not OPENAI_KEY:
+    raise ValueError("Missing OPENAI_API_KEY environment variable! Set it in Railway dashboard")
+if not AIRTOP_KEY:
+    raise ValueError("Missing AIRTOP_API_KEY environment variable! Set it in Railway dashboard")
 
 # Initialize LLM
 llm = ChatOpenAI(
@@ -385,6 +390,7 @@ async def scrape_property(address: str) -> PropertyData:
 def read_root():
     return {
         "service": "LOI Generator - LangChain Edition",
+        "status": "Running with environment variables",
         "endpoints": [
             "/scrape-property",
             "/generate-loi",
@@ -464,7 +470,14 @@ async def batch_process_endpoint(request: BatchRequest):
 # Health check endpoint
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    return {
+        "status": "healthy", 
+        "timestamp": datetime.now().isoformat(),
+        "env_vars_loaded": {
+            "OPENAI_API_KEY": bool(OPENAI_KEY),
+            "AIRTOP_API_KEY": bool(AIRTOP_KEY)
+        }
+    }
 
 if __name__ == "__main__":
     import uvicorn
