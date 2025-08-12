@@ -1,5 +1,6 @@
 # main.py - Complete LangChain Property Scraper System
 
+import os
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -30,8 +31,8 @@ from airtop import Airtop
 app = FastAPI(title="LOI Generator - LangChain Edition")
 
 # Initialize API clients
-OPENAI_KEY = "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"
-AIRTOP_KEY = "e1ad2bd816a5a93e.mcd8Fnus0p8UMOJvGZvMdB132O4jRyJ8A5hOTGZFXL"
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+AIRTOP_KEY = os.getenv("AIRTOP_API_KEY")
 
 # Initialize LLM
 llm = ChatOpenAI(
