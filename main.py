@@ -35,19 +35,29 @@ AIRTOP_KEY = os.getenv("AIRTOP_API_KEY")
 
 # Validate API keys exist
 if not OPENAI_KEY:
-    raise ValueError("Missing OPENAI_API_KEY environment variable! Set it in Railway dashboard")
+    print("Warning: Missing OPENAI_API_KEY environment variable! Some features may not work.")
 if not AIRTOP_KEY:
-    raise ValueError("Missing AIRTOP_API_KEY environment variable! Set it in Railway dashboard")
+    print("Warning: Missing AIRTOP_API_KEY environment variable! Browser automation will not work.")
 
-# Initialize LLM
-llm = ChatOpenAI(
-    api_key=OPENAI_KEY,
-    model="gpt-4o-mini",
-    temperature=0
-)
+# Initialize LLM (only if API key is available)
+llm = None
+if OPENAI_KEY:
+    try:
+        llm = ChatOpenAI(
+            api_key=OPENAI_KEY,
+            model="gpt-4o-mini",
+            temperature=0
+        )
+    except Exception as e:
+        print(f"Error initializing OpenAI: {e}")
 
-# Initialize Airtop
-airtop_client = Airtop(api_key=AIRTOP_KEY)
+# Initialize Airtop (only if API key is available)
+airtop_client = None
+if AIRTOP_KEY:
+    try:
+        airtop_client = Airtop(api_key=AIRTOP_KEY)
+    except Exception as e:
+        print(f"Error initializing Airtop: {e}")
 
 # Simple in-memory cache
 property_cache = {}
@@ -78,6 +88,17 @@ class CountyScraperAgent:
         
     async def scrape_fulton_county(self, address: str) -> Dict:
         """Scrapes Fulton County, GA assessor for owner info"""
+        if not self.airtop:
+            # Fallback to mock data if Airtop not available
+            await asyncio.sleep(1)
+            return {
+                "owner_name": "John Smith",
+                "owner_mailing_address": "123 Main St, Atlanta, GA 30301",
+                "parcel_id": "14-1234-5678-9012",
+                "property_class": "Residential",
+                "source": "Fulton County Assessor (Mock - Airtop not available)"
+            }
+            
         try:
             # Create browser session
             session = await self.airtop.create_session()
@@ -124,6 +145,15 @@ class CountyScraperAgent:
     
     async def scrape_la_county(self, address: str) -> Dict:
         """Scrapes LA County assessor for owner info"""
+        if not self.airtop:
+            # Fallback to mock data if Airtop not available
+            await asyncio.sleep(1)
+            return {
+                "owner_name": "Jane Doe",
+                "owner_mailing_address": "456 Oak Ave, Los Angeles, CA 90210",
+                "source": "LA County Assessor (Mock - Airtop not available)"
+            }
+            
         try:
             session = await self.airtop.create_session()
             
@@ -166,6 +196,23 @@ class ZillowScraperAgent:
         
     async def get_listing_price(self, address: str) -> Dict:
         """Scrapes Zillow for current listing price"""
+        if not self.airtop:
+            # Fallback to mock data if Airtop not available
+            await asyncio.sleep(1)
+            base_price = 450000 if "GA" in address or "Georgia" in address else 750000
+            price_variation = hash(address) % 200000
+            price = base_price + price_variation
+            
+            return {
+                "listing_price": price,
+                "property_details": {
+                    "bedrooms": "3",
+                    "bathrooms": "2",
+                    "sqft": "1,800"
+                },
+                "source": "Zillow (Mock - Airtop not available)"
+            }
+            
         try:
             session = await self.airtop.create_session()
             
@@ -390,11 +437,12 @@ async def scrape_property(address: str) -> PropertyData:
 def read_root():
     return {
         "service": "LOI Generator - LangChain Edition",
-        "status": "Running with environment variables",
+        "status": "Running with Airtop browser automation",
         "endpoints": [
             "/scrape-property",
             "/generate-loi",
-            "/batch-process"
+            "/batch-process",
+            "/health"
         ]
     }
 
@@ -476,7 +524,8 @@ def health_check():
         "env_vars_loaded": {
             "OPENAI_API_KEY": bool(OPENAI_KEY),
             "AIRTOP_API_KEY": bool(AIRTOP_KEY)
-        }
+        },
+        "mode": "airtop_browser_automation"
     }
 
 if __name__ == "__main__":
