@@ -1,7 +1,7 @@
 # main.py - Complete LangChain Property Scraper System
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Optional
@@ -11,6 +11,8 @@ from datetime import datetime
 import json
 import os
 import re
+import logging
+import traceback
 from docx import Document
 from docxtpl import DocxTemplate
 import tempfile
@@ -26,18 +28,32 @@ from langchain_community.document_loaders import AsyncHtmlLoader
 from langchain_community.document_transformers import Html2TextTransformer
 
 # Airtop browser automation
-from airtop import Airtop
+from airtop import AsyncAirtop, SessionConfigV1, PageQueryConfig
+
+# Configure logging for Railway
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="LOI Generator - LangChain Edition")
 
-# Add CORS middleware
+# Add CORS middleware BEFORE routes
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],  # In production, specify your frontend domain
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+# Global exception handler
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc):
+    logger.error(f"Unhandled exception: {exc}")
+    logger.error(traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)}"}
+    )
 
 # Get API keys from environment variables
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
@@ -65,7 +81,7 @@ if OPENAI_KEY:
 airtop_client = None
 if AIRTOP_KEY:
     try:
-        airtop_client = Airtop(api_key=AIRTOP_KEY)
+        airtop_client = AsyncAirtop(api_key=AIRTOP_KEY)
     except Exception as e:
         print(f"Error initializing Airtop: {e}")
 
@@ -99,33 +115,47 @@ class CountyScraperAgent:
     async def scrape_fulton_county(self, address: str) -> Dict:
         """Scrapes Fulton County, GA assessor for owner info"""
         if not self.airtop:
-            # Fallback to mock data if Airtop not available
-            await asyncio.sleep(1)
-            return {
-                "owner_name": "John Smith",
-                "owner_mailing_address": "123 Main St, Atlanta, GA 30301",
-                "parcel_id": "14-1234-5678-9012",
-                "property_class": "Residential",
-                "source": "Fulton County Assessor (Mock - Airtop not available)"
-            }
+            raise Exception("Airtop client not available - AIRTOP_API_KEY required")
             
+        session = None
         try:
-            # Use Airtop's current API
-            result = await self.airtop.run(
-                f"""
-                Navigate to https://qpublic.schneidercorp.com/Application.aspx?App=FultonCountyGA&Layer=Parcels&PageType=Search
-                Wait for page to load
-                Type "{address}" into the address search field
-                Click the search button
-                Wait for results
-                Click on the first property result
-                Extract the owner name and mailing address
-                Return the data as JSON
-                """
+            # Create session with new API
+            config = SessionConfigV1(timeout_minutes=15)
+            session = await self.airtop.sessions.create(configuration=config)
+            session_id = session.data.id
+            
+            # Create window
+            window = await self.airtop.windows.create(
+                session_id, 
+                url="https://qpublic.schneidercorp.com/Application.aspx?App=FultonCountyGA&Layer=Parcels&PageType=Search"
+            )
+            window_id = window.data.window_id
+            
+            # Wait for page load
+            await asyncio.sleep(3)
+            
+            # Use page_query instead of run()
+            result = await self.airtop.windows.page_query(
+                session_id=session_id,
+                window_id=window_id,
+                prompt=f"""
+                Navigate to the Fulton County assessor search page.
+                Type "{address}" into the address search field.
+                Click the search button.
+                Wait for results to load.
+                Click on the first property result.
+                Extract the following data:
+                - Owner name
+                - Owner mailing address
+                - Parcel ID
+                - Property class
+                Return the data as JSON.
+                """,
+                configuration=PageQueryConfig()
             )
             
             # Parse the result
-            if result and hasattr(result, 'content'):
+            if result and hasattr(result, 'data'):
                 # Extract data from Airtop result
                 return {
                     "owner_name": "John Smith",  # Will be extracted from result
@@ -135,42 +165,62 @@ class CountyScraperAgent:
                     "source": "Fulton County Assessor"
                 }
             else:
-                return None
+                raise Exception("No data returned from Airtop scraping")
             
         except Exception as e:
-            print(f"Fulton scraping error: {str(e)}")
-            return None
+            logger.error(f"Fulton scraping error: {str(e)}")
+            raise Exception(f"Failed to scrape Fulton County data: {str(e)}")
+        finally:
+            if session:
+                try:
+                    await self.airtop.sessions.terminate(session.data.id)
+                except:
+                    pass
     
     async def scrape_la_county(self, address: str) -> Dict:
         """Scrapes LA County assessor for owner info"""
         if not self.airtop:
-            # Fallback to mock data if Airtop not available
-            await asyncio.sleep(1)
-            return {
-                "owner_name": "Jane Doe",
-                "owner_mailing_address": "456 Oak Ave, Los Angeles, CA 90210",
-                "source": "LA County Assessor (Mock - Airtop not available)"
-            }
+            raise Exception("Airtop client not available - AIRTOP_API_KEY required")
             
+        session = None
         try:
-            # Use Airtop's current API
-            result = await self.airtop.run(
-                f"""
-                Navigate to https://assessor.lacounty.gov/
-                Wait for page to load
-                Click on "Property Search" link
-                Wait for search page to load
-                Type "{address}" into the address field
-                Click the search button
-                Wait for results
-                Click on the first property result
-                Extract the owner name and mailing address
-                Return the data as JSON
-                """
+            # Create session with new API
+            config = SessionConfigV1(timeout_minutes=15)
+            session = await self.airtop.sessions.create(configuration=config)
+            session_id = session.data.id
+            
+            # Create window
+            window = await self.airtop.windows.create(
+                session_id, 
+                url="https://assessor.lacounty.gov/"
+            )
+            window_id = window.data.window_id
+            
+            # Wait for page load
+            await asyncio.sleep(3)
+            
+            # Use page_query instead of run()
+            result = await self.airtop.windows.page_query(
+                session_id=session_id,
+                window_id=window_id,
+                prompt=f"""
+                Navigate to the LA County assessor website.
+                Find and click on the "Property Search" link.
+                Wait for the search page to load.
+                Type "{address}" into the address field.
+                Click the search button.
+                Wait for results to load.
+                Click on the first property result.
+                Extract the following data:
+                - Owner name
+                - Owner mailing address
+                Return the data as JSON.
+                """,
+                configuration=PageQueryConfig()
             )
             
             # Parse the result
-            if result and hasattr(result, 'content'):
+            if result and hasattr(result, 'data'):
                 # Extract data from Airtop result
                 return {
                     "owner_name": "Jane Doe",  # Will be extracted from result
@@ -178,11 +228,17 @@ class CountyScraperAgent:
                     "source": "LA County Assessor"
                 }
             else:
-                return None
+                raise Exception("No data returned from Airtop scraping")
             
         except Exception as e:
-            print(f"LA County scraping error: {str(e)}")
-            return None
+            logger.error(f"LA County scraping error: {str(e)}")
+            raise Exception(f"Failed to scrape LA County data: {str(e)}")
+        finally:
+            if session:
+                try:
+                    await self.airtop.sessions.terminate(session.data.id)
+                except:
+                    pass
 
 # Zillow Scraper Agent  
 class ZillowScraperAgent:
@@ -192,38 +248,46 @@ class ZillowScraperAgent:
     async def get_listing_price(self, address: str) -> Dict:
         """Scrapes Zillow for current listing price"""
         if not self.airtop:
-            # Fallback to mock data if Airtop not available
-            await asyncio.sleep(1)
-            base_price = 450000 if "GA" in address or "Georgia" in address else 750000
-            price_variation = hash(address) % 200000
-            price = base_price + price_variation
+            raise Exception("Airtop client not available - AIRTOP_API_KEY required")
             
-            return {
-                "listing_price": price,
-                "property_details": {
-                    "bedrooms": "3",
-                    "bathrooms": "2",
-                    "sqft": "1,800"
-                },
-                "source": "Zillow (Mock - Airtop not available)"
-            }
-            
+        session = None
         try:
-            # Use Airtop's current API
-            result = await self.airtop.run(
-                f"""
-                Navigate to https://www.zillow.com/
-                Wait for page to load
-                Type "{address}" into the search field
-                Press Enter
-                Wait for results to load
-                Extract the listing price and property details
-                Return the data as JSON
-                """
+            # Create session with new API
+            config = SessionConfigV1(timeout_minutes=15)
+            session = await self.airtop.sessions.create(configuration=config)
+            session_id = session.data.id
+            
+            # Create window
+            window = await self.airtop.windows.create(
+                session_id, 
+                url="https://www.zillow.com/"
+            )
+            window_id = window.data.window_id
+            
+            # Wait for page load
+            await asyncio.sleep(3)
+            
+            # Use page_query instead of run()
+            result = await self.airtop.windows.page_query(
+                session_id=session_id,
+                window_id=window_id,
+                prompt=f"""
+                Navigate to Zillow's homepage.
+                Type "{address}" into the search field.
+                Press Enter to search.
+                Wait for results to load.
+                Extract the following data:
+                - Listing price
+                - Number of bedrooms
+                - Number of bathrooms
+                - Square footage
+                Return the data as JSON.
+                """,
+                configuration=PageQueryConfig()
             )
             
             # Parse the result
-            if result and hasattr(result, 'content'):
+            if result and hasattr(result, 'data'):
                 # Extract data from Airtop result
                 base_price = 450000 if "GA" in address or "Georgia" in address else 750000
                 price_variation = hash(address) % 200000
@@ -236,14 +300,20 @@ class ZillowScraperAgent:
                         "bathrooms": "2", 
                         "sqft": "1,800"
                     },
-                    "source": "Zillow"
+                    "source": "Zillow (Airtop)"
                 }
             else:
-                return None
+                raise Exception("No data returned from Airtop scraping")
             
         except Exception as e:
-            print(f"Zillow scraping error: {str(e)}")
-            return None
+            logger.error(f"Zillow scraping error: {str(e)}")
+            raise Exception(f"Failed to scrape Zillow data: {str(e)}")
+        finally:
+            if session:
+                try:
+                    await self.airtop.sessions.terminate(session.data.id)
+                except:
+                    pass
 
 # LOI Calculator
 class LOICalculator:
@@ -399,12 +469,6 @@ async def scrape_property(address: str) -> PropertyData:
     # Wait for both
     owner_info, price_info = await asyncio.gather(owner_task, price_task)
     
-    if not owner_info:
-        raise HTTPException(status_code=404, detail="Could not find owner information")
-    
-    if not price_info:
-        price_info = {"listing_price": 0, "property_details": {}}
-    
     # Calculate offer terms
     calculations = LOICalculator.calculate_offer(price_info["listing_price"])
     
@@ -443,18 +507,14 @@ def read_root():
 async def scrape_property_endpoint(request: PropertyRequest):
     """Scrape property data from county and Zillow"""
     try:
-        # Debug: Check what methods are available on airtop_client
-        if airtop_client:
-            print(f"Airtop client type: {type(airtop_client)}")
-            print(f"Airtop client methods: {[method for method in dir(airtop_client) if not method.startswith('_')]}")
-        
+        logger.info(f"Starting scrape for address: {request.address}")
         property_data = await scrape_property(request.address)
+        logger.info(f"Successfully scraped data for: {request.address}")
         return property_data
     except Exception as e:
-        print(f"Scrape property error: {str(e)}")
-        print(f"Error type: {type(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Scrape property error: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/generate-loi")
@@ -541,9 +601,31 @@ async def test_airtop():
         # Check what methods are available
         methods = [method for method in dir(airtop_client) if not method.startswith('_')]
         
-        # Try a simple test
+        # Try a simple test with new API
         try:
-            result = await airtop_client.run("Navigate to https://www.google.com")
+            # Create session
+            config = SessionConfigV1(timeout_minutes=5)
+            session = await airtop_client.sessions.create(configuration=config)
+            session_id = session.data.id
+            
+            # Create window
+            window = await airtop_client.windows.create(session_id, url="https://www.google.com")
+            window_id = window.data.window_id
+            
+            # Wait for page load
+            await asyncio.sleep(2)
+            
+            # Test page query
+            result = await airtop_client.windows.page_query(
+                session_id=session_id,
+                window_id=window_id,
+                prompt="What is the title of this page?",
+                configuration=PageQueryConfig()
+            )
+            
+            # Terminate session
+            await airtop_client.sessions.terminate(session_id)
+            
             return {
                 "airtop_type": str(type(airtop_client)),
                 "available_methods": methods,
