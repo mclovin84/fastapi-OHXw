@@ -328,9 +328,8 @@ class CountyScraperAgent:
             
             logger.info(f"Successfully scraped {len(scraped_text)} characters from property page")
             
-            # Parse the scraped content to extract all property data
-            # FIXED FULTON COUNTY SCRAPER - Replace the parsing section in scrape_fulton_county method
-# Starting from line ~310 where it says "# Parse the scraped content"
+# SIMPLIFIED OWNER EXTRACTION - Replace the parsing section in scrape_fulton_county
+# This just looks for "Owner" and "Most Current Owner" and grabs whatever is there
 
             # Parse the scraped content to extract all property data
             lines = scraped_text.split('\n')
@@ -347,119 +346,84 @@ class CountyScraperAgent:
             bathrooms = ""
             acres = ""
             
-            # Look for the ACTUAL owner info from your knowledge base format
-            # The owner appears as "2015 3 IH2 BORROWER LP" in the scraped content
             for i, line in enumerate(lines):
                 line = line.strip()
                 
-                # Look for "Owner" section (not "Most Current Owner")
+                # Look for "Owner" (just "Owner", not "Most Current Owner")
                 if line == "Owner" and i + 1 < len(lines):
                     next_line = lines[i + 1].strip()
-                    # Check if it's not a link or header
-                    if next_line and not any(x in next_line.lower() for x in ['http', 'most', 'current', 'info']):
-                        if "BORROWER" in next_line or "LLC" in next_line or "LP" in next_line or "TRUST" in next_line:
-                            owner_name = next_line
-                            logger.info(f"Found owner directly: {owner_name}")
-                
-                # Also check for "Most Current Owner" section
-                if "Most Current Owner" in line and i + 1 < len(lines):
-                    next_line = lines[i + 1].strip()
-                    if next_line and "BORROWER" in next_line:
+                    # Skip if it's a link or navigation text
+                    if next_line and not any(x in next_line.lower() for x in ['http', 'www', 'click', 'here']):
                         owner_name = next_line
-                        # Get the address lines after owner name
-                        if i + 2 < len(lines):
-                            addr1 = lines[i + 2].strip()
-                            if i + 3 < len(lines):
-                                addr2 = lines[i + 3].strip()
-                                owner_mailing_address = f"{addr1} {addr2}"
-                        logger.info(f"Found owner from Most Current Owner: {owner_name}")
+                        logger.info(f"Found Owner: {owner_name}")
                 
-                # Extract Parcel Number - it should be like "09F270301230664"
+                # Look for "Most Current Owner" and get the name + address
+                if line == "Most Current Owner" and i + 1 < len(lines):
+                    # The next line should be the owner name
+                    owner_name = lines[i + 1].strip()
+                    logger.info(f"Found Most Current Owner: {owner_name}")
+                    
+                    # The next 2-3 lines are usually the mailing address
+                    address_parts = []
+                    for j in range(2, 5):  # Check next 3 lines for address
+                        if i + j < len(lines):
+                            addr_line = lines[i + j].strip()
+                            # Stop if we hit another section header
+                            if any(header in addr_line for header in ["Land", "Owner Info", "Property", "Summary"]):
+                                break
+                            if addr_line:
+                                address_parts.append(addr_line)
+                    
+                    if address_parts:
+                        owner_mailing_address = " ".join(address_parts)
+                        logger.info(f"Found Owner Mailing Address: {owner_mailing_address}")
+                
+                # Extract Parcel Number
                 if "Parcel Number" in line and i + 1 < len(lines):
-                    next_line = lines[i + 1].strip()
-                    # Check if it matches the parcel format
-                    if len(next_line) > 10 and any(c.isdigit() for c in next_line):
-                        parcel_id = next_line
-                        logger.info(f"Found Parcel ID: {parcel_id}")
+                    parcel_id = lines[i + 1].strip()
+                    logger.info(f"Found Parcel ID: {parcel_id}")
                 
                 # Extract Location Address
                 if "Location Address" in line and i + 1 < len(lines):
-                    addr_parts = []
-                    for j in range(1, 3):  # Get next 2 lines
-                        if i + j < len(lines):
-                            part = lines[i + j].strip()
-                            if part and not any(x in part for x in ["Legal", "Property", "Class"]):
-                                addr_parts.append(part)
-                    if addr_parts:
-                        location_address = " ".join(addr_parts)
-                        logger.info(f"Found Location Address: {location_address}")
+                    # Get next 2 lines for full address
+                    addr_line1 = lines[i + 1].strip() if i + 1 < len(lines) else ""
+                    addr_line2 = lines[i + 2].strip() if i + 2 < len(lines) else ""
+                    location_address = f"{addr_line1} {addr_line2}".strip()
+                    logger.info(f"Found Location Address: {location_address}")
                 
                 # Extract Property Class
                 if "Property Class" in line and i + 1 < len(lines):
-                    next_line = lines[i + 1].strip()
-                    if next_line:
-                        property_class = next_line
-                        logger.info(f"Found Property Class: {property_class}")
+                    property_class = lines[i + 1].strip()
+                    logger.info(f"Found Property Class: {property_class}")
                 
                 # Extract Acres
                 if line == "Acres" and i + 1 < len(lines):
-                    next_line = lines[i + 1].strip()
-                    if next_line and (next_line.replace('.', '').isdigit()):
-                        acres = next_line
-                        logger.info(f"Found Acres: {acres}")
+                    acres = lines[i + 1].strip()
+                    logger.info(f"Found Acres: {acres}")
                 
                 # Extract Year Built
                 if "Year Built" in line and i + 1 < len(lines):
-                    next_line = lines[i + 1].strip()
-                    if next_line.isdigit() and len(next_line) == 4:
-                        year_built = next_line
-                        logger.info(f"Found Year Built: {year_built}")
+                    year_built = lines[i + 1].strip()
+                    logger.info(f"Found Year Built: {year_built}")
                 
-                # Extract Square Feet
+                # Extract Square Feet (Res Sq Ft)
                 if "Res Sq Ft" in line and i + 1 < len(lines):
-                    next_line = lines[i + 1].strip().replace(",", "")
-                    if next_line.isdigit():
-                        square_feet = next_line
-                        logger.info(f"Found Square Feet: {square_feet}")
+                    square_feet = lines[i + 1].strip()
+                    logger.info(f"Found Square Feet: {square_feet}")
                 
                 # Extract Bedrooms
                 if line == "Bedrooms" and i + 1 < len(lines):
-                    next_line = lines[i + 1].strip()
-                    if next_line.isdigit():
-                        bedrooms = next_line
-                        logger.info(f"Found Bedrooms: {bedrooms}")
+                    bedrooms = lines[i + 1].strip()
+                    logger.info(f"Found Bedrooms: {bedrooms}")
                 
-                # Extract Bathrooms
+                # Extract Bathrooms (Full Bath/Half Bath)
                 if "Full Bath/Half Bath" in line and i + 1 < len(lines):
-                    next_line = lines[i + 1].strip()
-                    if "/" in next_line or next_line.replace(".", "").isdigit():
-                        bathrooms = next_line
-                        logger.info(f"Found Bathrooms: {bathrooms}")
+                    bathrooms = lines[i + 1].strip()
+                    logger.info(f"Found Bathrooms: {bathrooms}")
             
-            # FALLBACK: If owner not found yet, look in sales table
-            if owner_name == "Not found":
-                for i, line in enumerate(lines):
-                    # Find the sales table
-                    if "Sale Date" in line and "Grantee" in line:
-                        logger.info(f"Found sales table header, looking for owner in next rows")
-                        # Look at the next few rows
-                        for j in range(i + 1, min(i + 10, len(lines))):
-                            sale_line = lines[j].strip()
-                            # Look for "2015 3 IH2 BORROWER LP" directly
-                            if "2015 3 IH2 BORROWER LP" in sale_line:
-                                owner_name = "2015 3 IH2 BORROWER LP"
-                                logger.info(f"Found owner in sales table: {owner_name}")
-                                break
-                            # Or look for any entity with BORROWER, LLC, LP, etc.
-                            elif any(entity in sale_line for entity in ["BORROWER", "LLC", "LP", "INC", "TRUST"]):
-                                # Extract the entity name from the line
-                                import re
-                                entity_match = re.search(r'([A-Z0-9\s]+(?:BORROWER|LLC|LP|INC|TRUST)[\s\w]*)', sale_line)
-                                if entity_match:
-                                    owner_name = entity_match.group(1).strip()
-                                    logger.info(f"Found owner entity: {owner_name}")
-                                    break
-
+            # Use location address as mailing if not found
+            if owner_mailing_address == "Not found" and location_address:
+                owner_mailing_address = location_address            
 
 # FIXED ZILLOW/PRICE SCRAPER - Replace entire get_listing_price method in ZillowScraperAgent class
 
