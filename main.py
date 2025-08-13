@@ -936,7 +936,7 @@ async def scrape_property(address: str) -> PropertyData:
     try:
         owner_info, price_info = await asyncio.wait_for(
             asyncio.gather(owner_task, price_task),
-            timeout=25.0
+            timeout=45.0
         )
     except asyncio.TimeoutError:
         raise Exception("Scraping timed out after 25 seconds. Please try again.")
