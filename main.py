@@ -368,7 +368,7 @@ class LOICalculator:
 class DocumentGenerator:
     @staticmethod
     def create_loi_docx(property_data: PropertyData) -> str:
-        """Generate LOI document in .docx format with professional formatting"""
+        """Generate LOI document in .docx format matching the exact professional format"""
         
         # Create document
         doc = Document()
@@ -390,68 +390,58 @@ class DocumentGenerator:
         # Add title with professional formatting
         title = doc.add_heading('Letter of Intent', 0)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        title.style.font.size = Pt(16)
+        title.style.font.size = Pt(14)
         title.style.font.bold = True
         
-        # Add date with proper formatting
+        # Add date
         date_para = doc.add_paragraph()
         date_run = date_para.add_run(f'DATE: {today}')
         date_run.bold = True
-        date_run.font.size = Pt(12)
         
         # Add purchaser
         purchaser_para = doc.add_paragraph()
         purchaser_run = purchaser_para.add_run(f'Purchaser: {buyer_entity}')
         purchaser_run.bold = True
-        purchaser_run.font.size = Pt(12)
         
-        # Add property reference with proper formatting
-        prop_ref = doc.add_heading(f'RE: {property_data.address} ("the Property")', level=1)
-        prop_ref.style.font.size = Pt(12)
-        prop_ref.style.font.bold = True
+        # Add property reference
+        prop_ref = doc.add_paragraph()
+        prop_run = prop_ref.add_run(f'RE: {property_data.address} ("the Property")')
+        prop_run.bold = True
         
-        # Add introduction paragraph
+        # Add introduction
         intro_para = doc.add_paragraph()
-        intro_para.add_run('This non-binding letter represents Purchaser\'s intent to purchase the above captioned property (the "Property") including the land and improvements on the following terms and conditions:')
-        intro_para.paragraph_format.space_after = Pt(12)
+        intro_para.add_run('This ')
+        intro_bold = intro_para.add_run('non-binding letter')
+        intro_bold.bold = True
+        intro_para.add_run(' represents Purchaser\'s intent to purchase the above captioned property (the "Property") including the land and improvements on the following terms and conditions:')
         
-        # Create professional table for terms
+        # Create table for terms - NO BORDERS, clean layout
         table = doc.add_table(rows=0, cols=2)
-        table.style = 'Table Grid'
+        table.style = 'Table Normal'  # No borders
         table.autofit = False
         table.allow_autofit = False
         
-        # Set column widths
+        # Set column widths to match the image
         table.columns[0].width = Inches(1.8)
         table.columns[1].width = Inches(4.7)
         
-        # Add terms rows with better formatting
+        # Add terms rows with exact formatting from image
         def add_term_row(label, content):
             row = table.add_row()
             row.cells[0].text = label
             row.cells[1].text = content
-            # Make label bold and set font size
+            # Make label bold
             for paragraph in row.cells[0].paragraphs:
                 for run in paragraph.runs:
                     run.bold = True
-                    run.font.size = Pt(11)
-            # Set content font size
-            for paragraph in row.cells[1].paragraphs:
-                for run in paragraph.runs:
-                    run.font.size = Pt(11)
         
         def add_indent_row(content):
             row = table.add_row()
             row.cells[0].text = ""
             row.cells[1].text = content
-            # Indent the content
-            row.cells[1].paragraphs[0].paragraph_format.left_indent = Inches(0.3)
-            # Set font size
-            for paragraph in row.cells[1].paragraphs:
-                for run in paragraph.runs:
-                    run.font.size = Pt(10)
+            # No additional indentation - just aligned with content column
         
-        # Add all the terms with proper formatting
+        # Add all the terms exactly as shown in image
         add_term_row("Price:", f"${price:,.0f}")
         add_term_row("Financing:", f"Purchaser intends to obtain a loan of roughly ${financing:,.2f} commercial financing priced at prevailing interest rates.")
         add_term_row("Earnest Money:", f"Concurrently with full execution of a Purchase & Sale Agreement, Purchaser shall make an earnest money deposit (\"The Initial Deposit\") with a mutually agreed upon escrow agent in the amount of USD ${earnest1:,.1f} to be held in escrow and applied to the purchase price at closing. On expiration of the Due Diligence, Purchaser will pay a further ${earnest2:,.1f} deposit towards the purchase price and the combined ${total_earnest:,.0f} will be fully non-refundable.")
@@ -469,32 +459,41 @@ class DocumentGenerator:
         add_indent_row("Seller and Listing Broker to execute a valid Brokerage Referral Agreement with Buyer's brokerage providing for 3% commission payable to Buyer's Brokerage.")
         add_term_row("Purchase Contract:", "Pending receipt of sufficient information from Seller, Purchaser shall have (5) business days from mutual execution of this Letter of Intent agreement to submit a purchase and sale agreement.")
         
-        # Add closing paragraph with proper spacing
+        # Add closing paragraph with exact formatting from image
         doc.add_paragraph()
         closing_para = doc.add_paragraph()
-        closing_para.add_run(f'This letter of intent is not intended to create a binding agreement on the Seller to sell or the Purchaser to buy. The purpose of this letter is to set forth the primary terms and conditions upon which to execute a formal Purchase and Sale Agreement. All other terms and conditions shall be negotiated in the formal Purchase and Sale Agreement. This letter of Intent is open for acceptance through {accept_by}.')
-        closing_para.paragraph_format.space_after = Pt(18)
+        closing_para.add_run('This letter of intent is ')
+        closing_bold = closing_para.add_run('not intended')
+        closing_bold.bold = True
+        closing_para.add_run(' to create a binding agreement on the Seller to sell or the Purchaser to buy. The purpose of this letter is to set forth the primary terms and conditions upon which to execute a formal Purchase and Sale Agreement. All other terms and conditions shall be negotiated in the formal Purchase and Sale Agreement. This letter of Intent is open for acceptance through ')
+        closing_date = closing_para.add_run(accept_by)
+        closing_date.bold = True
+        closing_para.add_run('.')
         
-        # Add signature block with proper spacing and formatting
-        purchaser_sig = doc.add_paragraph("PURCHASER: " + buyer_entity)
+        # Add signature blocks with exact spacing from image
+        purchaser_sig = doc.add_paragraph(f"PURCHASER: {buyer_entity}")
         purchaser_sig.paragraph_format.space_after = Pt(12)
         
         doc.add_paragraph()
         doc.add_paragraph("By: _____________________________________ Date:________________")
+        doc.add_paragraph()
         doc.add_paragraph("Name: _________________________________________________")
         doc.add_paragraph()
         
         agreed_para = doc.add_paragraph("Agreed and Accepted:")
+        agreed_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
         agreed_para.paragraph_format.space_after = Pt(12)
         
         doc.add_paragraph()
-        seller_sig = doc.add_paragraph("SELLER: " + property_data.owner_name)
+        seller_sig = doc.add_paragraph(f"SELLER: {property_data.owner_name}")
         seller_sig.paragraph_format.space_after = Pt(12)
         
         doc.add_paragraph()
         doc.add_paragraph()
         doc.add_paragraph("By: _____________________________________ Date:________________")
+        doc.add_paragraph()
         doc.add_paragraph("Name: _________________________________________________")
+        doc.add_paragraph()
         doc.add_paragraph("Title: __________________________________________________")
         
         # Save to temp file
