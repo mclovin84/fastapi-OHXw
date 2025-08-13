@@ -632,7 +632,7 @@ class ZillowScraperAgent:
             await asyncio.sleep(5)
             
             # Extract data from the search results
-            extraction_result = await self.airtop.windows.extract(
+            extraction_result = await self.airtop.windows.scrape_content(
                 session_id=session_id,
                 window_id=window_id
             )
