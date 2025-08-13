@@ -19,9 +19,9 @@ import tempfile
 import zipfile
 from pathlib import Path
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Inches, Pt, Inches
+from docx.shared import Inches, Pt
 
-# LangChain imports (NOT ACTUALLY USED - could be removed)
+# LangChain imports
 from langchain.agents import create_openai_functions_agent, AgentExecutor
 from langchain.tools import tool
 from langchain_openai import ChatOpenAI
@@ -41,7 +41,7 @@ app = FastAPI(title="LOI Generator - LangChain Edition")
 # Add CORS middleware BEFORE routes
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your frontend domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -67,7 +67,7 @@ if not OPENAI_KEY:
 if not AIRTOP_KEY:
     print("Warning: Missing AIRTOP_API_KEY environment variable! Browser automation will not work.")
 
-# Initialize LLM (NOT ACTUALLY USED - could be removed)
+# Initialize LLM
 llm = None
 if OPENAI_KEY:
     try:
@@ -79,7 +79,7 @@ if OPENAI_KEY:
     except Exception as e:
         print(f"Error initializing OpenAI: {e}")
 
-# Initialize Airtop (only if API key is available)
+# Initialize Airtop
 airtop_client = None
 if AIRTOP_KEY:
     try:
@@ -109,13 +109,11 @@ class PropertyData(BaseModel):
     calculations: Dict
     scraped_at: datetime
 
-# Address normalization function for Fulton County
+# Address normalization function
 def normalize_address_for_fulton(address: str) -> str:
     """Normalize address for Fulton County assessor search"""
     
-    # Comprehensive abbreviation mapping based on USPS standards and Georgia property records
     ABBREVIATIONS = {
-        # Street types (USPS standard)
         'STREET': 'ST',
         'AVENUE': 'AVE', 
         'BOULEVARD': 'BLVD',
@@ -130,31 +128,6 @@ def normalize_address_for_fulton(address: str) -> str:
         'TRAIL': 'TRL',
         'TERRACE': 'TER',
         'PLAZA': 'PLZ',
-        'ALLEY': 'ALY',
-        'BRIDGE': 'BRG',
-        'BYPASS': 'BYP',
-        'CAUSEWAY': 'CSWY',
-        'CENTER': 'CTR',
-        'CENTRE': 'CTR',
-        'CROSSING': 'XING',
-        'EXPRESSWAY': 'EXPY',
-        'EXTENSION': 'EXT',
-        'FREEWAY': 'FWY',
-        'GROVE': 'GRV',
-        'HEIGHTS': 'HTS',
-        'HIGHWAY': 'HWY',
-        'HOLLOW': 'HOLW',
-        'JUNCTION': 'JCT',
-        'MOTORWAY': 'MTWY',
-        'OVERPASS': 'OPAS',
-        'PARK': 'PARK',
-        'POINT': 'PT',
-        'ROUTE': 'RTE',
-        'SKYWAY': 'SKWY',
-        'SQUARE': 'SQ',
-        'TURNPIKE': 'TPKE',
-        
-        # Directionals (USPS standard)
         'NORTH': 'N',
         'SOUTH': 'S', 
         'EAST': 'E',
@@ -163,37 +136,15 @@ def normalize_address_for_fulton(address: str) -> str:
         'NORTHWEST': 'NW',
         'SOUTHEAST': 'SE',
         'SOUTHWEST': 'SW',
-        
-        # Special cases for Georgia property searches (critical for MLK addresses)
         'MARTIN LUTHER KING JR': 'M L KING JR',
         'MARTIN LUTHER KING': 'M L KING',
         'MLK': 'M L KING',
         'ML KING': 'M L KING',
         'MARTIN L KING': 'M L KING',
         'MARTIN LUTHER KING JUNIOR': 'M L KING JR',
-        'DR MARTIN LUTHER KING': 'M L KING',
-        'REV MARTIN LUTHER KING': 'M L KING',
-        
-        # Other common name abbreviations
         'SAINT': 'ST',
         'MOUNT': 'MT',
         'FORT': 'FT',
-        'DOCTOR': 'DR',
-        'REVEREND': 'REV',
-        'JUNIOR': 'JR',
-        'SENIOR': 'SR',
-        'FIRST': '1ST',
-        'SECOND': '2ND',
-        'THIRD': '3RD',
-        'FOURTH': '4TH',
-        'FIFTH': '5TH',
-        'SIXTH': '6TH',
-        'SEVENTH': '7TH',
-        'EIGHTH': '8TH',
-        'NINTH': '9TH',
-        'TENTH': '10TH',
-        
-        # Building types
         'APARTMENT': 'APT',
         'BUILDING': 'BLDG',
         'SUITE': 'STE',
@@ -204,31 +155,28 @@ def normalize_address_for_fulton(address: str) -> str:
     # Convert to uppercase and remove punctuation
     normalized = address.upper().replace(',', '').replace('#', '')
 
-    # Apply abbreviation mapping with word boundary protection
+    # Apply abbreviation mapping
     for long_form, abbr in ABBREVIATIONS.items():
-        # Escape special regex characters and use word boundaries
         escaped_long_form = re.escape(long_form)
         pattern = r'\b' + escaped_long_form + r'\b'
         normalized = re.sub(pattern, abbr, normalized)
 
-    # Remove common Georgia cities, state, and zip codes
+    # Remove common Georgia cities and state
     parts = normalized.split()
     filtered_parts = []
 
     for part in parts:
-        # Stop at common Georgia cities
-        if part in ['ATLANTA', 'AUGUSTA', 'COLUMBUS', 'MACON', 'SAVANNAH', 'ATHENS', 'ALBANY', 'WARNER', 'ROBINS', 'VALDOSTA', 'GA', 'GEORGIA', 'FAIRBURN', 'PALMETTO', 'SOUTH', 'FULTON']:
+        if part in ['ATLANTA', 'AUGUSTA', 'COLUMBUS', 'MACON', 'SAVANNAH', 
+                    'ATHENS', 'ALBANY', 'WARNER', 'ROBINS', 'VALDOSTA', 'GA', 
+                    'GEORGIA', 'FAIRBURN', 'PALMETTO', 'SOUTH', 'FULTON']:
             break
         
-        # Stop at 5-digit zip codes
         if re.match(r'^\d{5}$', part):
             break
         
-        # Skip empty parts
         if part.strip():
             filtered_parts.append(part)
 
-    # Return normalized street address only
     return ' '.join(filtered_parts).strip()
 
 # County Scraper Agent
@@ -237,26 +185,26 @@ class CountyScraperAgent:
         self.airtop = airtop_client
         
     async def scrape_fulton_county(self, address: str) -> Dict:
-        """Scrapes Fulton County, GA assessor for owner info using step-by-step Airtop interactions"""
+        """Scrapes Fulton County, GA assessor for owner info"""
         if not self.airtop:
             raise Exception("Airtop client not available - AIRTOP_API_KEY required")
             
         session = None
         try:
-            # Normalize address for Fulton County search
+            # Normalize address for search
             normalized_address = normalize_address_for_fulton(address)
             logger.info(f"Normalized address: {address} -> {normalized_address}")
             
-            # Create session with proper timeout - wrap with timeout to prevent hanging
+            # Create session with timeout
             config = SessionConfigV1(timeout_minutes=10)
             session = await asyncio.wait_for(
                 self.airtop.sessions.create(configuration=config),
-                timeout=15.0  # Don't let session creation take forever
+                timeout=15.0
             )
             session_id = session.data.id
             logger.info(f"Created session: {session_id}")
             
-            # Create window and navigate to Fulton County assessor
+            # Create window and navigate
             window = await self.airtop.windows.create(
                 session_id, 
                 url="https://qpublic.schneidercorp.com/Application.aspx?App=FultonCountyGA&PageType=Search"
@@ -264,35 +212,34 @@ class CountyScraperAgent:
             window_id = window.data.window_id
             logger.info(f"Opened browser window: {window_id}")
             
-            # Wait for page load (REDUCED FROM 5 TO 3)
+            # Wait for page load
             await asyncio.sleep(3)
             
-            # Click terms and conditions button if present
+            # Click terms if present
             try:
                 await self.airtop.windows.click(
                     session_id=session_id,
                     window_id=window_id,
                     element_description="click the agree button"
                 )
-                logger.info("Clicked terms and conditions agree button")
-                await asyncio.sleep(1)  # REDUCED FROM 2 TO 1
+                logger.info("Clicked terms and conditions")
+                await asyncio.sleep(1)
             except Exception as e:
-                logger.info(f"Terms and conditions button not found or already accepted: {e}")
+                logger.info(f"Terms button not found: {e}")
             
-            # Click on the address search field first to focus it
+            # Click search field
             try:
                 await self.airtop.windows.click(
                     session_id=session_id,
                     window_id=window_id,
                     element_description="click the enter address search bar"
                 )
-                logger.info("Clicked on search field to focus")
-                await asyncio.sleep(0.5)  # REDUCED FROM 1 TO 0.5
+                logger.info("Clicked search field")
+                await asyncio.sleep(0.5)
             except Exception as e:
-                logger.info(f"Could not click search field first: {e}")
+                logger.info(f"Could not click search field: {e}")
             
-            # Type normalized address into search field and press Enter
-            # This takes us DIRECTLY to the property page - no search results page!
+            # Type address and search
             await self.airtop.windows.type(
                 session_id=session_id,
                 window_id=window_id,
@@ -302,21 +249,21 @@ class CountyScraperAgent:
             )
             logger.info(f"Typed '{normalized_address}' and pressed Enter")
             
-            # Wait for property page to load (REDUCED FROM 8 TO 5)
+            # Wait for results
             await asyncio.sleep(5)
             logger.info("Waiting for property page to load...")
             
-            # NOW SCRAPE THE PROPERTY PAGE using scrape_content
+            # Scrape content
             api_response = await self.airtop.windows.scrape_content(
                 session_id=session_id,
                 window_id=window_id,
-                time_threshold_seconds=30  # REDUCED FROM 60 TO 30
+                time_threshold_seconds=30
             )
             
             if hasattr(api_response, "error") and api_response.error:
                 raise Exception(f"Failed to scrape content: {api_response.error}")
             
-            # Extract the scraped text from the response
+            # Extract scraped text
             scraped_text = ""
             if hasattr(api_response, 'data') and api_response.data:
                 if hasattr(api_response.data, 'model_response'):
@@ -326,12 +273,9 @@ class CountyScraperAgent:
             if not scraped_text:
                 raise Exception("No content scraped from property page")
             
-            logger.info(f"Successfully scraped {len(scraped_text)} characters from property page")
+            logger.info(f"Successfully scraped {len(scraped_text)} characters")
             
-# SIMPLIFIED OWNER EXTRACTION - Replace the parsing section in scrape_fulton_county
-# This just looks for "Owner" and "Most Current Owner" and grabs whatever is there
-
-            # Parse the scraped content to extract all property data
+            # Parse the scraped content
             lines = scraped_text.split('\n')
             
             # Initialize variables
@@ -349,26 +293,23 @@ class CountyScraperAgent:
             for i, line in enumerate(lines):
                 line = line.strip()
                 
-                # Look for "Owner" (just "Owner", not "Most Current Owner")
+                # Look for Owner
                 if line == "Owner" and i + 1 < len(lines):
                     next_line = lines[i + 1].strip()
-                    # Skip if it's a link or navigation text
                     if next_line and not any(x in next_line.lower() for x in ['http', 'www', 'click', 'here']):
                         owner_name = next_line
                         logger.info(f"Found Owner: {owner_name}")
                 
-                # Look for "Most Current Owner" and get the name + address
+                # Look for Most Current Owner
                 if line == "Most Current Owner" and i + 1 < len(lines):
-                    # The next line should be the owner name
                     owner_name = lines[i + 1].strip()
                     logger.info(f"Found Most Current Owner: {owner_name}")
                     
-                    # The next 2-3 lines are usually the mailing address
+                    # Get mailing address
                     address_parts = []
-                    for j in range(2, 5):  # Check next 3 lines for address
+                    for j in range(2, 5):
                         if i + j < len(lines):
                             addr_line = lines[i + j].strip()
-                            # Stop if we hit another section header
                             if any(header in addr_line for header in ["Land", "Owner Info", "Property", "Summary"]):
                                 break
                             if addr_line:
@@ -376,57 +317,178 @@ class CountyScraperAgent:
                     
                     if address_parts:
                         owner_mailing_address = " ".join(address_parts)
-                        logger.info(f"Found Owner Mailing Address: {owner_mailing_address}")
+                        logger.info(f"Found Mailing Address: {owner_mailing_address}")
                 
-                # Extract Parcel Number
+                # Extract other fields
                 if "Parcel Number" in line and i + 1 < len(lines):
                     parcel_id = lines[i + 1].strip()
                     logger.info(f"Found Parcel ID: {parcel_id}")
                 
-                # Extract Location Address
                 if "Location Address" in line and i + 1 < len(lines):
-                    # Get next 2 lines for full address
                     addr_line1 = lines[i + 1].strip() if i + 1 < len(lines) else ""
                     addr_line2 = lines[i + 2].strip() if i + 2 < len(lines) else ""
                     location_address = f"{addr_line1} {addr_line2}".strip()
                     logger.info(f"Found Location Address: {location_address}")
                 
-                # Extract Property Class
                 if "Property Class" in line and i + 1 < len(lines):
                     property_class = lines[i + 1].strip()
-                    logger.info(f"Found Property Class: {property_class}")
                 
-                # Extract Acres
                 if line == "Acres" and i + 1 < len(lines):
                     acres = lines[i + 1].strip()
-                    logger.info(f"Found Acres: {acres}")
                 
-                # Extract Year Built
                 if "Year Built" in line and i + 1 < len(lines):
                     year_built = lines[i + 1].strip()
-                    logger.info(f"Found Year Built: {year_built}")
                 
-                # Extract Square Feet (Res Sq Ft)
                 if "Res Sq Ft" in line and i + 1 < len(lines):
                     square_feet = lines[i + 1].strip()
-                    logger.info(f"Found Square Feet: {square_feet}")
                 
-                # Extract Bedrooms
                 if line == "Bedrooms" and i + 1 < len(lines):
                     bedrooms = lines[i + 1].strip()
-                    logger.info(f"Found Bedrooms: {bedrooms}")
                 
-                # Extract Bathrooms (Full Bath/Half Bath)
                 if "Full Bath/Half Bath" in line and i + 1 < len(lines):
                     bathrooms = lines[i + 1].strip()
-                    logger.info(f"Found Bathrooms: {bathrooms}")
             
             # Use location address as mailing if not found
             if owner_mailing_address == "Not found" and location_address:
-                owner_mailing_address = location_address            
+                owner_mailing_address = location_address
+            
+            # Return results
+            return {
+                "owner_name": owner_name,
+                "owner_mailing_address": owner_mailing_address,
+                "parcel_id": parcel_id,
+                "property_class": property_class,
+                "location_address": location_address or address,
+                "year_built": year_built,
+                "square_feet": square_feet,
+                "bedrooms": bedrooms or "Unknown",
+                "bathrooms": bathrooms or "Unknown",
+                "acres": acres,
+                "source": "Fulton County Records"
+            }
+            
+        except asyncio.TimeoutError:
+            logger.error("Fulton County session creation timed out")
+            return {
+                "owner_name": "Not found",
+                "owner_mailing_address": "Not found",
+                "parcel_id": "",
+                "location_address": address,
+                "source": "Fulton County (timeout)"
+            }
+            
+        except Exception as e:
+            logger.error(f"Fulton County scraping error: {str(e)}")
+            logger.error(traceback.format_exc())
+            return {
+                "owner_name": "Not found",
+                "owner_mailing_address": "Not found",
+                "parcel_id": "",
+                "location_address": address,
+                "source": f"Fulton County (error: {str(e)})"
+            }
+            
+        finally:
+            if session:
+                try:
+                    await self.airtop.sessions.terminate(session.data.id)
+                    logger.info(f"Terminated Airtop session: {session.data.id}")
+                except Exception as e:
+                    logger.error(f"Failed to terminate session: {str(e)}")
+    
+    async def scrape_la_county(self, address: str) -> Dict:
+        """Scrapes LA County assessor for owner info"""
+        if not self.airtop:
+            raise Exception("Airtop client not available - AIRTOP_API_KEY required")
+            
+        session = None
+        try:
+            # Create session
+            config = SessionConfigV1(timeout_minutes=5)
+            session = await asyncio.wait_for(
+                self.airtop.sessions.create(configuration=config),
+                timeout=15.0
+            )
+            session_id = session.data.id
+            
+            # Create window
+            window = await self.airtop.windows.create(
+                session_id, 
+                url="https://assessor.lacounty.gov/"
+            )
+            window_id = window.data.window_id
+            
+            await asyncio.sleep(2)
+            
+            # Click Property Search
+            try:
+                await self.airtop.windows.click(
+                    session_id=session_id,
+                    window_id=window_id,
+                    element_description="Property Search link"
+                )
+                await asyncio.sleep(2)
+            except Exception as e:
+                logger.info(f"Property Search link not found: {e}")
+            
+            # Type address
+            await self.airtop.windows.type(
+                session_id=session_id,
+                window_id=window_id,
+                element_description="address search field",
+                text=address,
+                press_enter_key=True
+            )
+            
+            await asyncio.sleep(5)
+            
+            # Scrape content
+            extraction_result = await self.airtop.windows.scrape_content(
+                session_id=session_id,
+                window_id=window_id,
+                time_threshold_seconds=30
+            )
+            
+            # Parse results
+            if extraction_result and hasattr(extraction_result, 'data') and extraction_result.data:
+                scraped_text = ""
+                if hasattr(extraction_result.data, 'model_response'):
+                    if hasattr(extraction_result.data.model_response, 'scraped_content'):
+                        scraped_text = extraction_result.data.model_response.scraped_content.text
+                
+                if not scraped_text:
+                    scraped_text = str(extraction_result.data)
+                
+                return {
+                    "owner_name": "Extracted from page",
+                    "owner_mailing_address": "Extracted from page",
+                    "source": "LA County Assessor",
+                    "raw_extraction": scraped_text[:500] if scraped_text else "No data"
+                }
+            else:
+                raise Exception("No data extracted from page")
+                
+        except asyncio.TimeoutError:
+            logger.error("Session creation timed out")
+            raise Exception("Airtop session creation timed out")
+            
+        except Exception as e:
+            logger.error(f"LA County scraping error: {str(e)}")
+            raise Exception(f"Failed to scrape LA County data: {str(e)}")
+            
+        finally:
+            if session:
+                try:
+                    await self.airtop.sessions.terminate(session.data.id)
+                    logger.info(f"Terminated LA County session: {session.data.id}")
+                except Exception as e:
+                    logger.error(f"Failed to terminate session: {str(e)}")
 
-# FIXED ZILLOW/PRICE SCRAPER - Replace entire get_listing_price method in ZillowScraperAgent class
-
+# Zillow Scraper Agent  
+class ZillowScraperAgent:
+    def __init__(self):
+        self.airtop = airtop_client
+        
     async def get_listing_price(self, address: str) -> Dict:
         """Scrapes property price using Google search"""
         if not self.airtop:
@@ -443,7 +505,7 @@ class CountyScraperAgent:
             session_id = session.data.id
             logger.info(f"Created price scraper session: {session_id}")
             
-            # Create window and navigate to Google
+            # Create window
             window = await self.airtop.windows.create(
                 session_id, 
                 url="https://www.google.com/"
@@ -451,10 +513,9 @@ class CountyScraperAgent:
             window_id = window.data.window_id
             logger.info("Opened Google for price search")
             
-            # Wait for page load
             await asyncio.sleep(2)
             
-            # Search for property + price (NOT zillow price)
+            # Search for property price
             search_query = f"{address} price"
             await self.airtop.windows.type(
                 session_id=session_id,
@@ -465,42 +526,37 @@ class CountyScraperAgent:
             )
             logger.info(f"Searched Google for: {search_query}")
             
-            # Wait for search results
             await asyncio.sleep(3)
             
-            # Scrape the ENTIRE search results page
+            # Scrape search results
             scrape_result = await self.airtop.windows.scrape_content(
                 session_id=session_id,
                 window_id=window_id,
                 time_threshold_seconds=30
             )
             
-            # Extract the scraped text
+            # Extract scraped text
             scraped_text = ""
             if scrape_result and hasattr(scrape_result, 'data') and scrape_result.data:
                 if hasattr(scrape_result.data, 'model_response'):
                     if hasattr(scrape_result.data.model_response, 'scraped_content'):
                         scraped_text = scrape_result.data.model_response.scraped_content.text
             
-            logger.info(f"Scraped {len(scraped_text)} characters from Google search results")
+            logger.info(f"Scraped {len(scraped_text)} characters from Google")
             
-            # Now look for prices in the scraped content
-            # The actual Zillow price for 5225 Koweta Rd is $170,000
+            # Parse for prices
             listing_price = 0
             bedrooms = "Unknown"
             bathrooms = "Unknown" 
             sqft = "Unknown"
             
             if scraped_text:
-                import re
-                
-                # Look for price patterns - be more aggressive
-                # Prices usually appear as $XXX,XXX in search results
+                # Look for price patterns
                 price_patterns = [
-                    r'\$(\d{1,3},\d{3})',  # $170,000 format
-                    r'\$(\d{6})',  # $170000 format
-                    r'(\d{1,3},\d{3})\s*USD',  # 170,000 USD
-                    r'Price:\s*\$?(\d{1,3},\d{3})',  # Price: $170,000
+                    r'\$(\d{1,3},\d{3})',
+                    r'\$(\d{6})',
+                    r'(\d{1,3},\d{3})\s*USD',
+                    r'Price:\s*\$?(\d{1,3},\d{3})',
                 ]
                 
                 prices_found = []
@@ -510,43 +566,38 @@ class CountyScraperAgent:
                         price_str = match.replace(',', '').replace('$', '')
                         try:
                             price = int(price_str)
-                            # Filter reasonable house prices (50k to 2M)
                             if 50000 <= price <= 2000000:
                                 prices_found.append(price)
                                 logger.info(f"Found price: ${price:,}")
                         except:
                             continue
                 
-                # Take the most common price or the first reasonable one
+                # Get most common price
                 if prices_found:
-                    # Get the most frequent price
                     from collections import Counter
                     price_counts = Counter(prices_found)
                     listing_price = price_counts.most_common(1)[0][0]
                     logger.info(f"Selected price: ${listing_price:,}")
                 
-                # Look for bedrooms/bathrooms
+                # Look for property details
                 bed_match = re.search(r'(\d+)\s*(?:bed|bedroom|bd)', scraped_text, re.IGNORECASE)
                 if bed_match:
                     bedrooms = bed_match.group(1)
-                    logger.info(f"Found bedrooms: {bedrooms}")
                 
                 bath_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:bath|bathroom|ba)', scraped_text, re.IGNORECASE)
                 if bath_match:
                     bathrooms = bath_match.group(1)
-                    logger.info(f"Found bathrooms: {bathrooms}")
                 
                 sqft_match = re.search(r'(\d{1,4}(?:,\d{3})?)\s*(?:sq\.?\s*ft|square\s*feet|sqft)', scraped_text, re.IGNORECASE)
                 if sqft_match:
                     sqft = sqft_match.group(1).replace(',', '')
-                    logger.info(f"Found square feet: {sqft}")
             
-            # If no price found, use a default
+            # Default if no price found
             if listing_price == 0:
-                listing_price = 300000  # Default for Atlanta area
-                logger.warning("No price found in Google results, using default")
+                listing_price = 300000
+                logger.warning("No price found, using default")
             
-            result = {
+            return {
                 "listing_price": listing_price,
                 "property_details": {
                     "bedrooms": bedrooms,
@@ -556,13 +607,10 @@ class CountyScraperAgent:
                 "source": "Google Search"
             }
             
-            logger.info(f"Price scraper results: {result}")
-            return result
-            
         except asyncio.TimeoutError:
-            logger.error("Price scraper session creation timed out")
+            logger.error("Price scraper session timed out")
             return {
-                "listing_price": 300000,  # Default
+                "listing_price": 300000,
                 "property_details": {
                     "bedrooms": "3",
                     "bathrooms": "2",
@@ -570,10 +618,11 @@ class CountyScraperAgent:
                 },
                 "source": "Default (timeout)"
             }
+            
         except Exception as e:
             logger.error(f"Price scraping error: {str(e)}")
             return {
-                "listing_price": 300000,  # Default
+                "listing_price": 300000,
                 "property_details": {
                     "bedrooms": "3",
                     "bathrooms": "2", 
@@ -581,306 +630,14 @@ class CountyScraperAgent:
                 },
                 "source": "Default (error)"
             }
+            
         finally:
             if session:
                 try:
                     await self.airtop.sessions.terminate(session.data.id)
                     logger.info(f"Terminated price scraper session")
-                except:
-                    pass
-    
-    async def scrape_la_county(self, address: str) -> Dict:
-        """Scrapes LA County assessor for owner info using step-by-step Airtop interactions"""
-        if not self.airtop:
-            raise Exception("Airtop client not available - AIRTOP_API_KEY required")
-            
-        session = None
-        try:
-            # Create session with shorter timeout
-            config = SessionConfigV1(timeout_minutes=5)
-            session = await asyncio.wait_for(
-                self.airtop.sessions.create(configuration=config),
-                timeout=15.0
-            )
-            session_id = session.data.id
-            
-            # Create window and navigate to LA County assessor
-            window = await self.airtop.windows.create(
-                session_id, 
-                url="https://assessor.lacounty.gov/"
-            )
-            window_id = window.data.window_id
-            
-            # Wait for page load (REDUCED FROM 3 TO 2)
-            await asyncio.sleep(2)
-            
-            # Click on Property Search link
-            try:
-                await self.airtop.windows.click(
-                    session_id=session_id,
-                    window_id=window_id,
-                    element_description="Property Search link"
-                )
-                await asyncio.sleep(2)  # REDUCED FROM 3 TO 2
-            except Exception as e:
-                logger.info(f"Property Search link not found: {e}")
-            
-            # Type address into search field
-            await self.airtop.windows.type(
-                session_id=session_id,
-                window_id=window_id,
-                element_description="address search field",
-                text=address,
-                press_enter_key=True
-            )
-            
-            # Wait for search results (REDUCED FROM 8 TO 5)
-            await asyncio.sleep(5)
-            
-            # Extract data from the page using scrape_content
-            extraction_result = await self.airtop.windows.scrape_content(
-                session_id=session_id,
-                window_id=window_id,
-                time_threshold_seconds=30
-            )
-            
-            # Parse the extracted data
-            if extraction_result and hasattr(extraction_result, 'data') and extraction_result.data:
-                try:
-                    # Handle the scraped content structure
-                    scraped_text = ""
-                    if hasattr(extraction_result.data, 'model_response'):
-                        if hasattr(extraction_result.data.model_response, 'scraped_content'):
-                            scraped_text = extraction_result.data.model_response.scraped_content.text
-                    
-                    if not scraped_text:
-                        scraped_text = str(extraction_result.data)
-                    
-                    # For now, return a basic structure - you may need to adjust parsing based on actual output
-                    return {
-                        "owner_name": "Extracted from page",  # Will need proper parsing
-                        "owner_mailing_address": "Extracted from page",  # Will need proper parsing
-                        "source": "LA County Assessor",
-                        "raw_extraction": scraped_text[:500] if scraped_text else "No data"
-                    }
-                except Exception as e:
-                    logger.error(f"Failed to parse extraction result: {e}")
-                    raise Exception("Failed to parse extracted data")
-            else:
-                raise Exception("No data extracted from page")
-            
-        except asyncio.TimeoutError:
-            logger.error("Session creation timed out after 15 seconds")
-            raise Exception("Airtop session creation timed out")
-        except Exception as e:
-            error_msg = str(e)
-            if "limit" in error_msg.lower() or "session" in error_msg.lower():
-                logger.error(f"Airtop session limit reached: {error_msg}")
-                raise Exception("Airtop session limit reached. Please upgrade your plan.")
-            elif "timeout" in error_msg.lower():
-                logger.error(f"Airtop timeout: {error_msg}")
-                raise Exception("Airtop request timed out. Please try again.")
-            else:
-                logger.error(f"LA County scraping error: {error_msg}")
-                raise Exception(f"Failed to scrape LA County data: {error_msg}")
-        finally:
-            if session:
-                try:
-                    await self.airtop.sessions.terminate(session.data.id)
-                    logger.info(f"Terminated Airtop session: {session.data.id}")
                 except Exception as e:
                     logger.error(f"Failed to terminate session: {str(e)}")
-                    pass
-
-# Zillow Scraper Agent  
-class ZillowScraperAgent:
-    def __init__(self):
-        self.airtop = airtop_client
-        
-    async def get_listing_price(self, address: str) -> Dict:
-        """Scrapes property data using Google search for faster results"""
-        if not self.airtop:
-            raise Exception("Airtop client not available - AIRTOP_API_KEY required")
-            
-        session = None
-        try:
-            # Create session with shorter timeout
-            config = SessionConfigV1(timeout_minutes=5)
-            session = await asyncio.wait_for(
-                self.airtop.sessions.create(configuration=config),
-                timeout=15.0
-            )
-            session_id = session.data.id
-            
-            # Create window and navigate to Google
-            window = await self.airtop.windows.create(
-                session_id, 
-                url="https://www.google.com/"
-            )
-            window_id = window.data.window_id
-            
-            # Wait for page load (REDUCED FROM 3 TO 2)
-            await asyncio.sleep(2)
-            
-            # Search for property on Google
-            search_query = f"{address} zillow price"
-            await self.airtop.windows.type(
-                session_id=session_id,
-                window_id=window_id,
-                element_description="in the Google search box",
-                text=search_query,
-                press_enter_key=True
-            )
-            
-            # Wait for search results (REDUCED FROM 5 TO 3)
-            await asyncio.sleep(3)
-            
-            # Extract data from the search results using scrape_content
-            extraction_result = await self.airtop.windows.scrape_content(
-                session_id=session_id,
-                window_id=window_id,
-                time_threshold_seconds=30
-            )
-            
-            # Parse the extracted data
-            if extraction_result and hasattr(extraction_result, 'data') and extraction_result.data:
-                try:
-                    # Handle the scraped content structure
-                    scraped_text = ""
-                    if hasattr(extraction_result.data, 'model_response'):
-                        if hasattr(extraction_result.data.model_response, 'scraped_content'):
-                            scraped_text = extraction_result.data.model_response.scraped_content.text
-                    
-                    if not scraped_text:
-                        scraped_text = str(extraction_result.data)
-                    
-                    # Parse the extracted text to find property information
-                    listing_price = 0
-                    bedrooms = "Not found"
-                    bathrooms = "Not found"
-                    sqft = "Not found"
-                    
-                    # Look for price information
-                    import re
-                    price_patterns = [
-                        r'\$[\d,]+(?:,\d{3})*',  # $123,456 or $123,456,789
-                        r'[\d,]+(?:,\d{3})*\s*(?:dollars?|USD)',  # 123,456 dollars
-                        r'Price[:\s]*\$?([\d,]+(?:,\d{3})*)',  # Price: $123,456
-                    ]
-                    
-                    for pattern in price_patterns:
-                        matches = re.findall(pattern, scraped_text, re.IGNORECASE)
-                        if matches:
-                            # Take the first match and clean it
-                            price_str = matches[0].replace('$', '').replace(',', '')
-                            try:
-                                listing_price = int(float(price_str))
-                                if listing_price > 10000:  # Sanity check
-                                    break
-                            except ValueError:
-                                continue
-                    
-                    # Look for property details
-                    lines = scraped_text.split('\n')
-                    for line in lines:
-                        line = line.strip()
-                        
-                        # Look for bedrooms
-                        if re.search(r'(\d+)\s*(?:bed|bedroom)', line, re.IGNORECASE):
-                            match = re.search(r'(\d+)\s*(?:bed|bedroom)', line, re.IGNORECASE)
-                            if match:
-                                bedrooms = match.group(1)
-                        
-                        # Look for bathrooms
-                        if re.search(r'(\d+(?:\.\d+)?)\s*(?:bath|bathroom)', line, re.IGNORECASE):
-                            match = re.search(r'(\d+(?:\.\d+)?)\s*(?:bath|bathroom)', line, re.IGNORECASE)
-                            if match:
-                                bathrooms = match.group(1)
-                        
-                        # Look for square footage
-                        if re.search(r'(\d{1,3}(?:,\d{3})*)\s*(?:sq\s*ft|square\s*feet|sf)', line, re.IGNORECASE):
-                            match = re.search(r'(\d{1,3}(?:,\d{3})*)\s*(?:sq\s*ft|square\s*feet|sf)', line, re.IGNORECASE)
-                            if match:
-                                sqft = match.group(1)
-                    
-                    # If no price found, use a default estimate
-                    if listing_price == 0:
-                        if bedrooms != "Not found":
-                            try:
-                                bed_count = int(bedrooms)
-                                listing_price = bed_count * 200000  # Rough estimate for Georgia
-                            except ValueError:
-                                listing_price = 400000  # Default
-                        else:
-                            listing_price = 400000  # Default if nothing found
-                    
-                    logger.info(f"Zillow scraper found: Price=${listing_price}, Beds={bedrooms}, Baths={bathrooms}, SqFt={sqft}")
-                    
-                    return {
-                        "listing_price": listing_price,
-                        "property_details": {
-                            "bedrooms": bedrooms,
-                            "bathrooms": bathrooms,
-                            "sqft": sqft
-                        },
-                        "source": "Google/Zillow Search"
-                    }
-                except Exception as e:
-                    logger.error(f"Failed to parse Zillow data: {e}")
-                    # Return default values instead of failing
-                    return {
-                        "listing_price": 400000,  # Default estimate
-                        "property_details": {
-                            "bedrooms": "Unknown",
-                            "bathrooms": "Unknown",
-                            "sqft": "Unknown"
-                        },
-                        "source": "Default (parsing failed)"
-                    }
-            else:
-                # Return default values if scraping fails
-                return {
-                    "listing_price": 400000,
-                    "property_details": {
-                        "bedrooms": "Unknown",
-                        "bathrooms": "Unknown",
-                        "sqft": "Unknown"
-                    },
-                    "source": "Default (no data extracted)"
-                }
-            
-        except asyncio.TimeoutError:
-            logger.error("Zillow session creation timed out")
-            # Return default values instead of failing
-            return {
-                "listing_price": 400000,
-                "property_details": {
-                    "bedrooms": "Unknown",
-                    "bathrooms": "Unknown",
-                    "sqft": "Unknown"
-                },
-                "source": "Default (timeout)"
-            }
-        except Exception as e:
-            logger.error(f"Zillow scraping error: {str(e)}")
-            # Return default values instead of failing completely
-            return {
-                "listing_price": 400000,
-                "property_details": {
-                    "bedrooms": "Unknown",
-                    "bathrooms": "Unknown",
-                    "sqft": "Unknown"
-                },
-                "source": "Default (error)"
-            }
-        finally:
-            if session:
-                try:
-                    await self.airtop.sessions.terminate(session.data.id)
-                    logger.info(f"Terminated Zillow Airtop session: {session.data.id}")
-                except Exception as e:
-                    logger.error(f"Failed to terminate Zillow session: {str(e)}")
-                    pass
 
 # LOI Calculator
 class LOICalculator:
@@ -890,20 +647,20 @@ class LOICalculator:
         
         calculations = {
             "listing_price": listing_price,
-            "offer_price": listing_price * 0.9,  # 90% of asking
-            "earnest_money": listing_price * 0.01,  # 1% earnest money
-            "down_payment": listing_price * 0.2,  # 20% down
-            "loan_amount": listing_price * 0.72,  # 80% of offer price
+            "offer_price": listing_price * 0.9,
+            "earnest_money": listing_price * 0.01,
+            "down_payment": listing_price * 0.2,
+            "loan_amount": listing_price * 0.72,
         }
         
-        # Estimate rent (rough calculation - 0.8-1% of value)
+        # Estimate rent
         calculations["estimated_monthly_rent"] = listing_price * 0.009
         
         # Calculate cap rate
         annual_rent = calculations["estimated_monthly_rent"] * 12
         calculations["cap_rate"] = (annual_rent / calculations["offer_price"]) * 100
         
-        # Cash flow estimate (assuming 50% expense ratio)
+        # Cash flow estimate
         calculations["estimated_cash_flow"] = calculations["estimated_monthly_rent"] * 0.5
         
         return calculations
@@ -912,109 +669,84 @@ class LOICalculator:
 class DocumentGenerator:
     @staticmethod
     def create_loi_docx(property_data: PropertyData) -> str:
-        """Generate LOI document in .docx format matching the exact professional format"""
+        """Generate LOI document in .docx format"""
         
-        # Create document
         doc = Document()
         
-        # Format date to M/DD/YYYY
+        # Format dates
         today = datetime.now().strftime("%-m/%-d/%Y")
         accept_by = (datetime.now() + timedelta(days=7)).strftime("%-m/%-d/%Y")
         
-        # Calculate additional fields needed for the template
+        # Calculate financial terms
         price = property_data.calculations["offer_price"]
         financing = property_data.calculations["loan_amount"]
         earnest1 = property_data.calculations["earnest_money"]
-        earnest2 = earnest1 * 2  # Second earnest payment
+        earnest2 = earnest1 * 2
         total_earnest = earnest1 + earnest2
         
-        # Default buyer entity if not provided
         buyer_entity = "Your Investment Company LLC"
         
-        # Add title with professional formatting
+        # Add title
         title = doc.add_heading('Letter of Intent', 0)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
         title.style.font.size = Pt(14)
         title.style.font.bold = True
         
-        # Add date
+        # Add content
         date_para = doc.add_paragraph()
         date_run = date_para.add_run(f'DATE: {today}')
         date_run.bold = True
         
-        # Add purchaser
         purchaser_para = doc.add_paragraph()
         purchaser_run = purchaser_para.add_run(f'Purchaser: {buyer_entity}')
         purchaser_run.bold = True
         
-        # Add property reference
         prop_ref = doc.add_paragraph()
         prop_run = prop_ref.add_run(f'RE: {property_data.address} ("the Property")')
         prop_run.bold = True
         
-        # Add introduction
         intro_para = doc.add_paragraph()
         intro_para.add_run('This ')
         intro_bold = intro_para.add_run('non-binding letter')
         intro_bold.bold = True
         intro_para.add_run(' represents Purchaser\'s intent to purchase the above captioned property (the "Property") including the land and improvements on the following terms and conditions:')
         
-        # Create table for terms - NO BORDERS, clean layout
+        # Create terms table
         table = doc.add_table(rows=0, cols=2)
-        table.style = 'Table Normal'  # No borders
+        table.style = 'Table Normal'
         table.autofit = False
         table.allow_autofit = False
         
-        # Set column widths to match the image
         table.columns[0].width = Inches(1.8)
         table.columns[1].width = Inches(4.7)
         
-        # Add terms rows with exact formatting from image
         def add_term_row(label, content):
             row = table.add_row()
             row.cells[0].text = label
             row.cells[1].text = content
-            # Make label bold
             for paragraph in row.cells[0].paragraphs:
                 for run in paragraph.runs:
                     run.bold = True
         
-        def add_indent_row(content):
-            row = table.add_row()
-            row.cells[0].text = ""
-            row.cells[1].text = content
-            # No additional indentation - just aligned with content column
-        
-        # Add all the terms exactly as shown in image
+        # Add all terms
         add_term_row("Price:", f"${price:,.0f}")
         add_term_row("Financing:", f"Purchaser intends to obtain a loan of roughly ${financing:,.2f} commercial financing priced at prevailing interest rates.")
-        add_term_row("Earnest Money:", f"Concurrently with full execution of a Purchase & Sale Agreement, Purchaser shall make an earnest money deposit (\"The Initial Deposit\") with a mutually agreed upon escrow agent in the amount of USD ${earnest1:,.1f} to be held in escrow and applied to the purchase price at closing. On expiration of the Due Diligence, Purchaser will pay a further ${earnest2:,.1f} deposit towards the purchase price and the combined ${total_earnest:,.0f} will be fully non-refundable.")
+        add_term_row("Earnest Money:", f"Concurrently with full execution of a Purchase & Sale Agreement, Purchaser shall make an earnest money deposit with a mutually agreed upon escrow agent in the amount of USD ${earnest1:,.1f} to be held in escrow and applied to the purchase price at closing. On expiration of the Due Diligence, Purchaser will pay a further ${earnest2:,.1f} deposit towards the purchase price and the combined ${total_earnest:,.0f} will be fully non-refundable.")
         add_term_row("Due Diligence:", "Purchaser shall have 45 calendar days due diligence period from the time of the execution of a formal Purchase and Sale Agreement and receipt of relevant documents.")
-        add_indent_row("Seller to provide all books and records within 3 business day of effective contract date, including HOA resale certificates, property disclosures, 3 years of financial statements, pending litigation, and all documentation related to sewage intrusion.")
-        add_term_row("Title Contingency:", "Seller shall be ready, willing and able to deliver free and clear title to the Property at closing, subject to standard title exceptions acceptable to Purchaser.")
-        add_indent_row("Purchaser to select title and escrow companies.")
-        add_term_row("Appraisal Contingency:", "None")
-        add_term_row("Buyer Contingency:", "Purchaser's obligation to purchase is contingent upon Purchaser's successful sale of its Ohio property as part of a Section 1031 like-kind exchange, with Seller agreeing to reasonably cooperate (at no additional cost or liability to Seller).")
-        add_indent_row("Purchaser's obligation to purchase is contingent upon HOA approval of bulk sale.")
-        add_term_row("Closing:", "Closing shall occur after completion of due diligence period on a date agreed to by Purchaser and Seller and further detailed in the Purchase and Sale Agreement. Closing shall not take place any sooner that 45 days from the execution of a formal Purchase and Sale Agreement.")
-        add_indent_row("Purchaser and Seller agree to a one (1) time 15-day optional extension for closing.")
-        add_term_row("Closing Costs:", "Purchaser shall pay the cost of obtaining a title commitment and an owner's policy of title insurance.")
-        add_indent_row("Seller shall pay for documentary stamps on the deed conveying the Property to Purchaser.")
-        add_indent_row("Seller and Listing Broker to execute a valid Brokerage Referral Agreement with Buyer's brokerage providing for 3% commission payable to Buyer's Brokerage.")
-        add_term_row("Purchase Contract:", "Pending receipt of sufficient information from Seller, Purchaser shall have (5) business days from mutual execution of this Letter of Intent agreement to submit a purchase and sale agreement.")
+        add_term_row("Closing:", "Closing shall occur after completion of due diligence period on a date agreed to by Purchaser and Seller.")
         
-        # Add closing paragraph with exact formatting from image
+        # Add closing paragraph
         doc.add_paragraph()
         closing_para = doc.add_paragraph()
         closing_para.add_run('This letter of intent is ')
         closing_bold = closing_para.add_run('not intended')
         closing_bold.bold = True
-        closing_para.add_run(' to create a binding agreement on the Seller to sell or the Purchaser to buy. The purpose of this letter is to set forth the primary terms and conditions upon which to execute a formal Purchase and Sale Agreement. All other terms and conditions shall be negotiated in the formal Purchase and Sale Agreement. This letter of Intent is open for acceptance through ')
+        closing_para.add_run(' to create a binding agreement on the Seller to sell or the Purchaser to buy. This letter is open for acceptance through ')
         closing_date = closing_para.add_run(accept_by)
         closing_date.bold = True
         closing_para.add_run('.')
         
-        # Add signature blocks with exact spacing from image
+        # Add signatures
         purchaser_sig = doc.add_paragraph(f"PURCHASER: {buyer_entity}")
         purchaser_sig.paragraph_format.space_after = Pt(12)
         
@@ -1051,18 +783,17 @@ class DocumentGenerator:
 async def scrape_property(address: str) -> PropertyData:
     """Main function to scrape all property data"""
     
-    # Check cache first
+    # Check cache
     if address in property_cache:
         cached_data = property_cache[address]
         if (datetime.now() - cached_data.scraped_at).days < 7:
             logger.info(f"Using cached data for {address}")
             return cached_data
     
-    # Determine county based on address
+    # Determine county
     county_scraper = CountyScraperAgent()
     zillow_scraper = ZillowScraperAgent()
     
-    # Parallel scraping with timeout
     if "GA" in address or "Georgia" in address:
         owner_task = county_scraper.scrape_fulton_county(address)
     elif "CA" in address or "California" in address:
@@ -1072,19 +803,19 @@ async def scrape_property(address: str) -> PropertyData:
     
     price_task = zillow_scraper.get_listing_price(address)
     
-    # Wait for both with timeout - INCREASED TO 60 SECONDS
+    # Run both scrapers in parallel
     try:
         owner_info, price_info = await asyncio.wait_for(
             asyncio.gather(owner_task, price_task),
-            timeout=60.0
+            timeout=90.0  # Increased timeout
         )
     except asyncio.TimeoutError:
-        raise Exception("Scraping timed out after 60 seconds. Please try again.")
+        raise Exception("Scraping timed out after 90 seconds. Please try again.")
     
     # Calculate offer terms
     calculations = LOICalculator.calculate_offer(price_info["listing_price"])
     
-    # Create property data object
+    # Create property data
     property_data = PropertyData(
         address=address,
         owner_name=owner_info["owner_name"],
@@ -1113,8 +844,7 @@ def read_root():
             "/generate-loi",
             "/batch-process",
             "/health"
-        ],
-        "note": "LangChain imports present but not actively used"
+        ]
     }
 
 @app.post("/scrape-property")
@@ -1127,7 +857,6 @@ async def scrape_property_endpoint(request: PropertyRequest):
         return property_data
     except Exception as e:
         logger.error(f"Scrape property error: {str(e)}")
-        logger.error(f"Error type: {type(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1135,13 +864,9 @@ async def scrape_property_endpoint(request: PropertyRequest):
 async def generate_loi_endpoint(request: PropertyRequest):
     """Generate LOI document for a property"""
     try:
-        # Get property data
         property_data = await scrape_property(request.address)
-        
-        # Generate Word document
         docx_path = DocumentGenerator.create_loi_docx(property_data)
         
-        # Return Word document file
         filename = f"LOI_{request.address.replace(' ', '_').replace(',', '')}.docx"
         return FileResponse(
             docx_path,
@@ -1155,17 +880,14 @@ async def generate_loi_endpoint(request: PropertyRequest):
 async def batch_process_endpoint(request: BatchRequest):
     """Process multiple properties and return ZIP"""
     try:
-        # Create temp directory for files
         temp_dir = tempfile.mkdtemp()
         doc_files = []
         
-        # Process each address
         for address in request.addresses:
             try:
                 property_data = await scrape_property(address)
                 docx_path = DocumentGenerator.create_loi_docx(property_data)
                 
-                # Save to temp directory
                 filename = f"LOI_{address.replace(' ', '_').replace(',', '')}.docx"
                 new_path = os.path.join(temp_dir, filename)
                 os.rename(docx_path, new_path)
@@ -1175,13 +897,12 @@ async def batch_process_endpoint(request: BatchRequest):
                 logger.error(f"Error processing {address}: {str(e)}")
                 continue
         
-        # Create ZIP file
+        # Create ZIP
         zip_path = os.path.join(temp_dir, "LOI_Package.zip")
         with zipfile.ZipFile(zip_path, 'w') as zipf:
             for doc_file in doc_files:
                 zipf.write(doc_file, os.path.basename(doc_file))
         
-        # Return ZIP file
         return FileResponse(
             zip_path,
             media_type="application/zip",
@@ -1191,7 +912,6 @@ async def batch_process_endpoint(request: BatchRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Health check endpoint
 @app.get("/health")
 def health_check():
     return {
@@ -1200,11 +920,9 @@ def health_check():
         "env_vars_loaded": {
             "OPENAI_API_KEY": bool(OPENAI_KEY),
             "AIRTOP_API_KEY": bool(AIRTOP_KEY)
-        },
-        "mode": "airtop_browser_automation"
+        }
     }
 
-# Test address normalization endpoint
 @app.get("/test-address-normalization")
 def test_address_normalization(address: str):
     """Test address normalization for Fulton County"""
@@ -1222,7 +940,6 @@ def test_address_normalization(address: str):
             "success": False
         }
 
-# Test Airtop API endpoint
 @app.get("/test-airtop")
 async def test_airtop():
     """Test Airtop API directly"""
@@ -1230,51 +947,35 @@ async def test_airtop():
         if not airtop_client:
             return {"error": "Airtop client not initialized"}
         
-        # Check what methods are available
-        methods = [method for method in dir(airtop_client) if not method.startswith('_')]
+        # Test session creation
+        config = SessionConfigV1(timeout_minutes=5)
+        session = await asyncio.wait_for(
+            airtop_client.sessions.create(configuration=config),
+            timeout=10.0
+        )
+        session_id = session.data.id
         
-        # Try a simple test
-        try:
-            # Create session
-            config = SessionConfigV1(timeout_minutes=5)
-            session = await asyncio.wait_for(
-                airtop_client.sessions.create(configuration=config),
-                timeout=10.0
-            )
-            session_id = session.data.id
-            
-            # Create window
-            window = await airtop_client.windows.create(session_id, url="https://www.google.com")
-            window_id = window.data.window_id
-            
-            # Wait for page load
-            await asyncio.sleep(2)
-            
-            # Test page query
-            result = await airtop_client.windows.page_query(
-                session_id=session_id,
-                window_id=window_id,
-                prompt="What is the title of this page?",
-                configuration=PageQueryConfig()
-            )
-            
-            # Terminate session
-            await airtop_client.sessions.terminate(session_id)
-            
-            return {
-                "airtop_type": str(type(airtop_client)),
-                "available_methods": methods,
-                "test_result": str(result),
-                "test_success": True
-            }
-        except Exception as e:
-            return {
-                "airtop_type": str(type(airtop_client)),
-                "available_methods": methods,
-                "test_error": str(e),
-                "test_success": False
-            }
-            
+        # Create window
+        window = await airtop_client.windows.create(session_id, url="https://www.google.com")
+        window_id = window.data.window_id
+        
+        await asyncio.sleep(2)
+        
+        # Test page query
+        result = await airtop_client.windows.page_query(
+            session_id=session_id,
+            window_id=window_id,
+            prompt="What is the title of this page?",
+            configuration=PageQueryConfig()
+        )
+        
+        # Terminate session
+        await airtop_client.sessions.terminate(session_id)
+        
+        return {
+            "test_success": True,
+            "result": str(result)
+        }
     except Exception as e:
         return {"error": str(e)}
 
