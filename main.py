@@ -538,7 +538,7 @@ class CountyScraperAgent:
             await asyncio.sleep(8)
             
             # Extract data from the page
-            extraction_result = await self.airtop.windows.extract(
+            extraction_result = await self.airtop.windows.scrape_content(
                 session_id=session_id,
                 window_id=window_id
             )
