@@ -264,11 +264,10 @@ class CountyScraperAgent:
             
             # Click terms and conditions button if present
             try:
-                await self.airtop.windows.interact(
+                await self.airtop.windows.click(
                     session_id=session_id,
                     window_id=window_id,
-                    element_description="click the agree button",
-                    operation="click"
+                    element_description="click the agree button"
                 )
                 await asyncio.sleep(2)
             except Exception as e:
@@ -276,22 +275,20 @@ class CountyScraperAgent:
             
             # Click on the address search field first
             try:
-                await self.airtop.windows.interact(
+                await self.airtop.windows.click(
                     session_id=session_id,
                     window_id=window_id,
-                    element_description="click the enter address search bar",
-                    operation="click"
+                    element_description="click the enter address search bar"
                 )
                 await asyncio.sleep(1)
             except Exception as e:
                 logger.info(f"Could not click search field first: {e}")
             
             # Type normalized address into search field
-            await self.airtop.windows.interact(
+            await self.airtop.windows.type(
                 session_id=session_id,
                 window_id=window_id,
                 element_description="click the enter address search bar",
-                operation="type",
                 text=normalized_address,
                 press_enter_key=True
             )
@@ -301,11 +298,10 @@ class CountyScraperAgent:
             
             # Click on the first search result to go to property details page
             try:
-                await self.airtop.windows.interact(
+                await self.airtop.windows.click(
                     session_id=session_id,
                     window_id=window_id,
-                    element_description="first property result in search results",
-                    operation="click"
+                    element_description="first property result in search results"
                 )
                 await asyncio.sleep(5)  # Wait for property details page to load
             except Exception as e:
@@ -433,22 +429,20 @@ class CountyScraperAgent:
             
             # Click on Property Search link
             try:
-                await self.airtop.windows.interact(
+                await self.airtop.windows.click(
                     session_id=session_id,
                     window_id=window_id,
-                    element_description="Property Search link",
-                    operation="click"
+                    element_description="Property Search link"
                 )
                 await asyncio.sleep(3)
             except Exception as e:
                 logger.info(f"Property Search link not found: {e}")
             
             # Type address into search field
-            await self.airtop.windows.interact(
+            await self.airtop.windows.type(
                 session_id=session_id,
                 window_id=window_id,
                 element_description="address search field",
-                operation="type",
                 text=address,
                 press_enter_key=True
             )
@@ -539,11 +533,10 @@ class ZillowScraperAgent:
             
             # Search for property on Google
             search_query = f"{address} zillow price"
-            await self.airtop.windows.interact(
+            await self.airtop.windows.type(
                 session_id=session_id,
                 window_id=window_id,
                 element_description="in the Google search box",
-                operation="type",
                 text=search_query,
                 press_enter_key=True
             )
