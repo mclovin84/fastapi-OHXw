@@ -11,3 +11,4 @@ docxtpl==0.16.7
 airtop==0.0.49
 python-dateutil==2.8.2
 hypercorn
+playwright>=1.40.0

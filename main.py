@@ -161,7 +161,20 @@ class CountyScraperAgent:
             # Wait for search results
             await asyncio.sleep(8)
             
-            # Extract data from the page
+            # Click on the first search result to go to property details page
+            try:
+                await self.airtop.windows.interact(
+                    session_id=session_id,
+                    window_id=window_id,
+                    element_description="first property result in search results",
+                    operation="click"
+                )
+                await asyncio.sleep(5)  # Wait for property details page to load
+            except Exception as e:
+                logger.error(f"Failed to click on first search result: {e}")
+                raise Exception("No search results found for this address")
+            
+            # Extract data from the property details page
             extraction_result = await self.airtop.windows.extract(
                 session_id=session_id,
                 window_id=window_id
@@ -170,16 +183,15 @@ class CountyScraperAgent:
             # Parse the extracted data
             if extraction_result and hasattr(extraction_result, 'data') and extraction_result.data:
                 try:
-                    # The extraction should contain the owner information
-                    # We need to parse the HTML/text to extract specific fields
+                    # The extraction should contain the owner information from property details page
                     extracted_text = extraction_result.data
                     
                     # For now, return a basic structure - you may need to adjust parsing based on actual output
                     return {
-                        "owner_name": "Extracted from page",  # Will need proper parsing
-                        "owner_mailing_address": "Extracted from page",  # Will need proper parsing
-                        "parcel_id": "Extracted from page",  # Will need proper parsing
-                        "property_class": "Extracted from page",  # Will need proper parsing
+                        "owner_name": "Extracted from property details page",  # Will need proper parsing
+                        "owner_mailing_address": "Extracted from property details page",  # Will need proper parsing
+                        "parcel_id": "Extracted from property details page",  # Will need proper parsing
+                        "property_class": "Extracted from property details page",  # Will need proper parsing
                         "source": "Fulton County Assessor (Airtop Step-by-Step)",
                         "raw_extraction": extracted_text  # For debugging
                     }
@@ -187,7 +199,7 @@ class CountyScraperAgent:
                     logger.error(f"Failed to parse extraction result: {e}")
                     raise Exception("Failed to parse extracted data")
             else:
-                raise Exception("No data extracted from page")
+                raise Exception("No data extracted from property details page")
             
         except Exception as e:
             error_msg = str(e)
