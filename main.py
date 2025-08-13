@@ -136,7 +136,7 @@ class CountyScraperAgent:
             # Wait for page load
             await asyncio.sleep(3)
             
-            # Use page_query instead of run()
+            # Use page_query to actually scrape the data
             result = await self.airtop.windows.page_query(
                 session_id=session_id,
                 window_id=window_id,
@@ -146,26 +146,49 @@ class CountyScraperAgent:
                 Click the search button.
                 Wait for results to load.
                 Click on the first property result.
-                Extract the following data:
-                - Owner name
-                - Owner mailing address
-                - Parcel ID
-                - Property class
-                Return the data as JSON.
+                Extract the following data from the property details page:
+                - Owner name (look for "Owner" field)
+                - Owner mailing address (look for "Mailing Address" field)
+                - Parcel ID (look for "Parcel ID" field)
+                - Property class (look for "Property Class" field)
+                
+                Return ONLY the extracted data as JSON with these exact keys:
+                {{
+                    "owner_name": "actual owner name from page",
+                    "owner_mailing_address": "actual mailing address from page", 
+                    "parcel_id": "actual parcel ID from page",
+                    "property_class": "actual property class from page"
+                }}
+                
+                Do NOT make up any data. Only return what you can actually see on the page.
                 """,
                 configuration=PageQueryConfig()
             )
             
-            # Parse the result
-            if result and hasattr(result, 'data'):
-                # Extract data from Airtop result
-                return {
-                    "owner_name": "John Smith",  # Will be extracted from result
-                    "owner_mailing_address": "123 Main St, Atlanta, GA 30301",  # Will be extracted from result
-                    "parcel_id": "14-1234-5678-9012",
-                    "property_class": "Residential",
-                    "source": "Fulton County Assessor"
-                }
+            # Parse the actual result from Airtop
+            if result and hasattr(result, 'data') and result.data:
+                try:
+                    # Try to parse the JSON response from Airtop
+                    if isinstance(result.data, str):
+                        scraped_data = json.loads(result.data)
+                    else:
+                        scraped_data = result.data
+                    
+                    # Validate we got real data
+                    if scraped_data.get("owner_name") and scraped_data.get("owner_name") != "John Smith":
+                        return {
+                            "owner_name": scraped_data.get("owner_name", "Unknown"),
+                            "owner_mailing_address": scraped_data.get("owner_mailing_address", "Unknown"),
+                            "parcel_id": scraped_data.get("parcel_id", "Unknown"),
+                            "property_class": scraped_data.get("property_class", "Unknown"),
+                            "source": "Fulton County Assessor (Airtop)"
+                        }
+                    else:
+                        raise Exception("No real owner data found")
+                        
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.error(f"Failed to parse Airtop result: {e}")
+                    raise Exception("Failed to parse scraped data")
             else:
                 raise Exception("No data returned from Airtop scraping")
             
@@ -208,7 +231,7 @@ class CountyScraperAgent:
             # Wait for page load
             await asyncio.sleep(3)
             
-            # Use page_query instead of run()
+            # Use page_query to actually scrape the data
             result = await self.airtop.windows.page_query(
                 session_id=session_id,
                 window_id=window_id,
@@ -220,22 +243,43 @@ class CountyScraperAgent:
                 Click the search button.
                 Wait for results to load.
                 Click on the first property result.
-                Extract the following data:
-                - Owner name
-                - Owner mailing address
-                Return the data as JSON.
+                Extract the following data from the property details page:
+                - Owner name (look for "Owner" field)
+                - Owner mailing address (look for "Mailing Address" field)
+                
+                Return ONLY the extracted data as JSON with these exact keys:
+                {{
+                    "owner_name": "actual owner name from page",
+                    "owner_mailing_address": "actual mailing address from page"
+                }}
+                
+                Do NOT make up any data. Only return what you can actually see on the page.
                 """,
                 configuration=PageQueryConfig()
             )
             
-            # Parse the result
-            if result and hasattr(result, 'data'):
-                # Extract data from Airtop result
-                return {
-                    "owner_name": "Jane Doe",  # Will be extracted from result
-                    "owner_mailing_address": "456 Oak Ave, Los Angeles, CA 90210",  # Will be extracted from result
-                    "source": "LA County Assessor"
-                }
+            # Parse the actual result from Airtop
+            if result and hasattr(result, 'data') and result.data:
+                try:
+                    # Try to parse the JSON response from Airtop
+                    if isinstance(result.data, str):
+                        scraped_data = json.loads(result.data)
+                    else:
+                        scraped_data = result.data
+                    
+                    # Validate we got real data
+                    if scraped_data.get("owner_name") and scraped_data.get("owner_name") != "Jane Doe":
+                        return {
+                            "owner_name": scraped_data.get("owner_name", "Unknown"),
+                            "owner_mailing_address": scraped_data.get("owner_mailing_address", "Unknown"),
+                            "source": "LA County Assessor (Airtop)"
+                        }
+                    else:
+                        raise Exception("No real owner data found")
+                        
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.error(f"Failed to parse Airtop result: {e}")
+                    raise Exception("Failed to parse scraped data")
             else:
                 raise Exception("No data returned from Airtop scraping")
             
@@ -283,7 +327,7 @@ class ZillowScraperAgent:
             # Wait for page load
             await asyncio.sleep(3)
             
-            # Use page_query instead of run()
+            # Use page_query to actually scrape the data
             result = await self.airtop.windows.page_query(
                 session_id=session_id,
                 window_id=window_id,
@@ -292,32 +336,63 @@ class ZillowScraperAgent:
                 Type "{address}" into the search field.
                 Press Enter to search.
                 Wait for results to load.
-                Extract the following data:
-                - Listing price
-                - Number of bedrooms
-                - Number of bathrooms
-                - Square footage
-                Return the data as JSON.
+                
+                Look for the property listing that matches "{address}" exactly.
+                Extract the following data from the property listing:
+                - Listing price (look for the main price display, usually in large text)
+                - Number of bedrooms (look for "bed" or "beds")
+                - Number of bathrooms (look for "bath" or "baths") 
+                - Square footage (look for "sqft" or "square feet")
+                
+                Return ONLY the extracted data as JSON with these exact keys:
+                {{
+                    "listing_price": actual_price_number,
+                    "property_details": {{
+                        "bedrooms": "actual_bedroom_count",
+                        "bathrooms": "actual_bathroom_count",
+                        "sqft": "actual_square_footage"
+                    }}
+                }}
+                
+                For the listing price, return ONLY the number (no $ or commas).
+                For bedrooms/bathrooms/sqft, return the actual values you see.
+                Do NOT make up any data. Only return what you can actually see on the page.
+                If you cannot find a value, use "Unknown" for that field.
                 """,
                 configuration=PageQueryConfig()
             )
             
-            # Parse the result
-            if result and hasattr(result, 'data'):
-                # Extract data from Airtop result
-                base_price = 450000 if "GA" in address or "Georgia" in address else 750000
-                price_variation = hash(address) % 200000
-                price = base_price + price_variation
-                
-                return {
-                    "listing_price": price,  # Will be extracted from result
-                    "property_details": {
-                        "bedrooms": "3",
-                        "bathrooms": "2", 
-                        "sqft": "1,800"
-                    },
-                    "source": "Zillow (Airtop)"
-                }
+            # Parse the actual result from Airtop
+            if result and hasattr(result, 'data') and result.data:
+                try:
+                    # Try to parse the JSON response from Airtop
+                    if isinstance(result.data, str):
+                        scraped_data = json.loads(result.data)
+                    else:
+                        scraped_data = result.data
+                    
+                    # Extract and validate the price
+                    listing_price = scraped_data.get("listing_price")
+                    if listing_price and listing_price != "Unknown":
+                        # Convert to float if it's a string
+                        if isinstance(listing_price, str):
+                            listing_price = float(listing_price.replace('$', '').replace(',', ''))
+                        
+                        return {
+                            "listing_price": listing_price,
+                            "property_details": {
+                                "bedrooms": scraped_data.get("property_details", {}).get("bedrooms", "Unknown"),
+                                "bathrooms": scraped_data.get("property_details", {}).get("bathrooms", "Unknown"),
+                                "sqft": scraped_data.get("property_details", {}).get("sqft", "Unknown")
+                            },
+                            "source": "Zillow (Airtop)"
+                        }
+                    else:
+                        raise Exception("No real price data found")
+                        
+                except (json.JSONDecodeError, KeyError, ValueError) as e:
+                    logger.error(f"Failed to parse Airtop result: {e}")
+                    raise Exception("Failed to parse scraped data")
             else:
                 raise Exception("No data returned from Airtop scraping")
             
