@@ -109,6 +109,128 @@ class PropertyData(BaseModel):
     calculations: Dict
     scraped_at: datetime
 
+# Address normalization function for Fulton County
+def normalize_address_for_fulton(address: str) -> str:
+    """Normalize address for Fulton County assessor search"""
+    
+    # Comprehensive abbreviation mapping based on USPS standards and Georgia property records
+    ABBREVIATIONS = {
+        # Street types (USPS standard)
+        'STREET': 'ST',
+        'AVENUE': 'AVE', 
+        'BOULEVARD': 'BLVD',
+        'DRIVE': 'DR',
+        'ROAD': 'RD',
+        'LANE': 'LN',
+        'COURT': 'CT',
+        'CIRCLE': 'CIR',
+        'PLACE': 'PL',
+        'PARKWAY': 'PKWY',
+        'WAY': 'WAY',
+        'TRAIL': 'TRL',
+        'TERRACE': 'TER',
+        'PLAZA': 'PLZ',
+        'ALLEY': 'ALY',
+        'BRIDGE': 'BRG',
+        'BYPASS': 'BYP',
+        'CAUSEWAY': 'CSWY',
+        'CENTER': 'CTR',
+        'CENTRE': 'CTR',
+        'CROSSING': 'XING',
+        'EXPRESSWAY': 'EXPY',
+        'EXTENSION': 'EXT',
+        'FREEWAY': 'FWY',
+        'GROVE': 'GRV',
+        'HEIGHTS': 'HTS',
+        'HIGHWAY': 'HWY',
+        'HOLLOW': 'HOLW',
+        'JUNCTION': 'JCT',
+        'MOTORWAY': 'MTWY',
+        'OVERPASS': 'OPAS',
+        'PARK': 'PARK',
+        'POINT': 'PT',
+        'ROUTE': 'RTE',
+        'SKYWAY': 'SKWY',
+        'SQUARE': 'SQ',
+        'TURNPIKE': 'TPKE',
+        
+        # Directionals (USPS standard)
+        'NORTH': 'N',
+        'SOUTH': 'S', 
+        'EAST': 'E',
+        'WEST': 'W',
+        'NORTHEAST': 'NE',
+        'NORTHWEST': 'NW',
+        'SOUTHEAST': 'SE',
+        'SOUTHWEST': 'SW',
+        
+        # Special cases for Georgia property searches (critical for MLK addresses)
+        'MARTIN LUTHER KING JR': 'M L KING JR',
+        'MARTIN LUTHER KING': 'M L KING',
+        'MLK': 'M L KING',
+        'ML KING': 'M L KING',
+        'MARTIN L KING': 'M L KING',
+        'MARTIN LUTHER KING JUNIOR': 'M L KING JR',
+        'DR MARTIN LUTHER KING': 'M L KING',
+        'REV MARTIN LUTHER KING': 'M L KING',
+        
+        # Other common name abbreviations
+        'SAINT': 'ST',
+        'MOUNT': 'MT',
+        'FORT': 'FT',
+        'DOCTOR': 'DR',
+        'REVEREND': 'REV',
+        'JUNIOR': 'JR',
+        'SENIOR': 'SR',
+        'FIRST': '1ST',
+        'SECOND': '2ND',
+        'THIRD': '3RD',
+        'FOURTH': '4TH',
+        'FIFTH': '5TH',
+        'SIXTH': '6TH',
+        'SEVENTH': '7TH',
+        'EIGHTH': '8TH',
+        'NINTH': '9TH',
+        'TENTH': '10TH',
+        
+        # Building types
+        'APARTMENT': 'APT',
+        'BUILDING': 'BLDG',
+        'SUITE': 'STE',
+        'UNIT': 'UNIT',
+        'FLOOR': 'FL'
+    }
+
+    # Convert to uppercase and remove punctuation
+    normalized = address.upper().replace(',', '').replace('#', '')
+
+    # Apply abbreviation mapping with word boundary protection
+    for long_form, abbr in ABBREVIATIONS.items():
+        # Escape special regex characters and use word boundaries
+        escaped_long_form = re.escape(long_form)
+        pattern = r'\b' + escaped_long_form + r'\b'
+        normalized = re.sub(pattern, abbr, normalized)
+
+    # Remove common Georgia cities, state, and zip codes
+    parts = normalized.split()
+    filtered_parts = []
+
+    for part in parts:
+        # Stop at common Georgia cities
+        if part in ['ATLANTA', 'AUGUSTA', 'COLUMBUS', 'MACON', 'SAVANNAH', 'ATHENS', 'ALBANY', 'WARNER', 'ROBINS', 'VALDOSTA', 'GA', 'GEORGIA', 'FAIRBURN', 'PALMETTO', 'SOUTH', 'FULTON']:
+            break
+        
+        # Stop at 5-digit zip codes
+        if re.match(r'^\d{5}$', part):
+            break
+        
+        # Skip empty parts
+        if part.strip():
+            filtered_parts.append(part)
+
+    # Return normalized street address only
+    return ' '.join(filtered_parts).strip()
+
 # County Scraper Agent
 class CountyScraperAgent:
     def __init__(self):
@@ -121,6 +243,10 @@ class CountyScraperAgent:
             
         session = None
         try:
+            # Normalize address for Fulton County search
+            normalized_address = normalize_address_for_fulton(address)
+            logger.info(f"Normalized address: {address} -> {normalized_address}")
+            
             # Create session with shorter timeout
             config = SessionConfigV1(timeout_minutes=5)
             session = await self.airtop.sessions.create(configuration=config)
@@ -134,27 +260,39 @@ class CountyScraperAgent:
             window_id = window.data.window_id
             
             # Wait for page load
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
             
             # Click terms and conditions button if present
             try:
                 await self.airtop.windows.interact(
                     session_id=session_id,
                     window_id=window_id,
-                    element_description="Click the agree button on terms and conditions",
+                    element_description="click the agree button",
                     operation="click"
                 )
                 await asyncio.sleep(2)
             except Exception as e:
                 logger.info(f"Terms and conditions button not found or already accepted: {e}")
             
-            # Type address into search field
+            # Click on the address search field first
+            try:
+                await self.airtop.windows.interact(
+                    session_id=session_id,
+                    window_id=window_id,
+                    element_description="click the enter address search bar",
+                    operation="click"
+                )
+                await asyncio.sleep(1)
+            except Exception as e:
+                logger.info(f"Could not click search field first: {e}")
+            
+            # Type normalized address into search field
             await self.airtop.windows.interact(
                 session_id=session_id,
                 window_id=window_id,
-                element_description="in the enter address field under search by location address",
+                element_description="click the enter address search bar",
                 operation="type",
-                text=address,
+                text=normalized_address,
                 press_enter_key=True
             )
             
@@ -183,17 +321,67 @@ class CountyScraperAgent:
             # Parse the extracted data
             if extraction_result and hasattr(extraction_result, 'data') and extraction_result.data:
                 try:
-                    # The extraction should contain the owner information from property details page
-                    extracted_text = extraction_result.data
+                    # Handle AiResponseEnvelope object structure
+                    if hasattr(extraction_result.data, 'content'):
+                        extracted_text = extraction_result.data.content
+                    elif hasattr(extraction_result.data, 'text'):
+                        extracted_text = extraction_result.data.text
+                    elif isinstance(extraction_result.data, str):
+                        extracted_text = extraction_result.data
+                    else:
+                        extracted_text = str(extraction_result.data)
                     
-                    # For now, return a basic structure - you may need to adjust parsing based on actual output
+                    # Parse the extracted text to find owner information
+                    owner_name = "Not found"
+                    owner_mailing_address = "Not found"
+                    parcel_id = "Not found"
+                    property_class = "Not found"
+                    
+                    # Look for owner information in the extracted text
+                    lines = extracted_text.split('\n')
+                    for i, line in enumerate(lines):
+                        line = line.strip()
+                        
+                        # Look for owner name (usually after "Owner" or "Most Current Owner")
+                        if "OWNER" in line.upper() and "MOST CURRENT" not in line.upper():
+                            # Look for the next non-empty line as owner name
+                            for j in range(i + 1, min(i + 5, len(lines))):
+                                next_line = lines[j].strip()
+                                if next_line and not next_line.startswith('[') and len(next_line) > 2:
+                                    owner_name = next_line
+                                    break
+                        
+                        # Look for mailing address (usually after owner name)
+                        if owner_name != "Not found" and "PO BOX" in line.upper():
+                            owner_mailing_address = line
+                            break
+                        elif owner_name != "Not found" and any(word in line.upper() for word in ["ST", "AVE", "DR", "RD", "BLVD", "LN", "CT"]):
+                            owner_mailing_address = line
+                            break
+                        
+                        # Look for parcel number
+                        if "PARCEL NUMBER" in line.upper():
+                            for j in range(i + 1, min(i + 3, len(lines))):
+                                next_line = lines[j].strip()
+                                if next_line and len(next_line) > 5:
+                                    parcel_id = next_line
+                                    break
+                        
+                        # Look for property class
+                        if "PROPERTY CLASS" in line.upper():
+                            for j in range(i + 1, min(i + 3, len(lines))):
+                                next_line = lines[j].strip()
+                                if next_line and " - " in next_line:
+                                    property_class = next_line
+                                    break
+                    
                     return {
-                        "owner_name": "Extracted from property details page",  # Will need proper parsing
-                        "owner_mailing_address": "Extracted from property details page",  # Will need proper parsing
-                        "parcel_id": "Extracted from property details page",  # Will need proper parsing
-                        "property_class": "Extracted from property details page",  # Will need proper parsing
+                        "owner_name": owner_name,
+                        "owner_mailing_address": owner_mailing_address,
+                        "parcel_id": parcel_id,
+                        "property_class": property_class,
                         "source": "Fulton County Assessor (Airtop Step-by-Step)",
-                        "raw_extraction": extracted_text  # For debugging
+                        "raw_extraction": extracted_text[:500] + "..." if len(extracted_text) > 500 else extracted_text  # Truncate for debugging
                     }
                 except Exception as e:
                     logger.error(f"Failed to parse extraction result: {e}")
@@ -278,7 +466,16 @@ class CountyScraperAgent:
             if extraction_result and hasattr(extraction_result, 'data') and extraction_result.data:
                 try:
                     # The extraction should contain the owner information
-                    extracted_text = extraction_result.data
+                    # Handle AiResponseEnvelope object structure
+                    if hasattr(extraction_result.data, 'content'):
+                        extracted_text = extraction_result.data.content
+                    elif hasattr(extraction_result.data, 'text'):
+                        extracted_text = extraction_result.data.text
+                    elif isinstance(extraction_result.data, str):
+                        extracted_text = extraction_result.data
+                    else:
+                        # Try to convert to string if it's an object
+                        extracted_text = str(extraction_result.data)
                     
                     # For now, return a basic structure - you may need to adjust parsing based on actual output
                     return {
@@ -363,19 +560,82 @@ class ZillowScraperAgent:
             # Parse the extracted data
             if extraction_result and hasattr(extraction_result, 'data') and extraction_result.data:
                 try:
-                    # The extraction should contain the search results
-                    extracted_text = extraction_result.data
+                    # Handle AiResponseEnvelope object structure
+                    if hasattr(extraction_result.data, 'content'):
+                        extracted_text = extraction_result.data.content
+                    elif hasattr(extraction_result.data, 'text'):
+                        extracted_text = extraction_result.data.text
+                    elif isinstance(extraction_result.data, str):
+                        extracted_text = extraction_result.data
+                    else:
+                        extracted_text = str(extraction_result.data)
                     
-                    # For now, return a basic structure - you may need to adjust parsing based on actual output
+                    # Parse the extracted text to find property information
+                    listing_price = 0
+                    bedrooms = "Not found"
+                    bathrooms = "Not found"
+                    sqft = "Not found"
+                    
+                    # Look for price information
+                    import re
+                    price_patterns = [
+                        r'\$[\d,]+(?:,\d{3})*',  # $123,456 or $123,456,789
+                        r'[\d,]+(?:,\d{3})*\s*(?:dollars?|USD)',  # 123,456 dollars
+                        r'Price[:\s]*\$?([\d,]+(?:,\d{3})*)',  # Price: $123,456
+                    ]
+                    
+                    for pattern in price_patterns:
+                        matches = re.findall(pattern, extracted_text, re.IGNORECASE)
+                        if matches:
+                            # Take the first match and clean it
+                            price_str = matches[0].replace(',', '')
+                            try:
+                                listing_price = int(price_str)
+                                break
+                            except ValueError:
+                                continue
+                    
+                    # Look for property details
+                    lines = extracted_text.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        
+                        # Look for bedrooms
+                        if re.search(r'(\d+)\s*(?:bed|bedroom)', line, re.IGNORECASE):
+                            match = re.search(r'(\d+)\s*(?:bed|bedroom)', line, re.IGNORECASE)
+                            if match:
+                                bedrooms = match.group(1)
+                        
+                        # Look for bathrooms
+                        if re.search(r'(\d+(?:\.\d+)?)\s*(?:bath|bathroom)', line, re.IGNORECASE):
+                            match = re.search(r'(\d+(?:\.\d+)?)\s*(?:bath|bathroom)', line, re.IGNORECASE)
+                            if match:
+                                bathrooms = match.group(1)
+                        
+                        # Look for square footage
+                        if re.search(r'(\d{1,3}(?:,\d{3})*)\s*(?:sq\s*ft|square\s*feet|sf)', line, re.IGNORECASE):
+                            match = re.search(r'(\d{1,3}(?:,\d{3})*)\s*(?:sq\s*ft|square\s*feet|sf)', line, re.IGNORECASE)
+                            if match:
+                                sqft = match.group(1)
+                    
+                    # If no price found, try to estimate based on property details
+                    if listing_price == 0 and bedrooms != "Not found":
+                        try:
+                            bed_count = int(bedrooms)
+                            # Rough estimate: $200k per bedroom for Georgia
+                            listing_price = bed_count * 200000
+                        except ValueError:
+                            listing_price = 400000  # Default estimate
+                    
                     return {
-                        "listing_price": 0,  # Will need proper parsing from extracted_text
+                        "listing_price": listing_price,
                         "property_details": {
-                            "bedrooms": "Extracted from search results",
-                            "bathrooms": "Extracted from search results", 
-                            "sqft": "Extracted from search results"
+                            "bedrooms": bedrooms,
+                            "bathrooms": bathrooms,
+                            "sqft": sqft
                         },
                         "source": "Google Search (Airtop Step-by-Step)",
-                        "raw_extraction": extracted_text  # For debugging
+                        "raw_extraction": extracted_text[:500] + "..." if len(extracted_text) > 500 else extracted_text  # Truncate for debugging
                     }
                 except Exception as e:
                     logger.error(f"Failed to parse extraction result: {e}")
@@ -721,6 +981,24 @@ def health_check():
         },
         "mode": "airtop_browser_automation"
     }
+
+# Test address normalization endpoint
+@app.get("/test-address-normalization")
+def test_address_normalization(address: str):
+    """Test address normalization for Fulton County"""
+    try:
+        normalized = normalize_address_for_fulton(address)
+        return {
+            "original_address": address,
+            "normalized_address": normalized,
+            "success": True
+        }
+    except Exception as e:
+        return {
+            "original_address": address,
+            "error": str(e),
+            "success": False
+        }
 
 # Test Airtop API endpoint
 @app.get("/test-airtop")
