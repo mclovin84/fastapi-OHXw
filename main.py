@@ -247,10 +247,11 @@ class CountyScraperAgent:
             normalized_address = normalize_address_for_fulton(address)
             logger.info(f"Normalized address: {address} -> {normalized_address}")
             
-            # Create session with shorter timeout
-            config = SessionConfigV1(timeout_minutes=5)
+            # Create session with proper timeout
+            config = SessionConfigV1(timeout_minutes=10)
             session = await self.airtop.sessions.create(configuration=config)
             session_id = session.data.id
+            logger.info(f"Created session: {session_id}")
             
             # Create window and navigate to Fulton County assessor
             window = await self.airtop.windows.create(
@@ -258,6 +259,7 @@ class CountyScraperAgent:
                 url="https://qpublic.schneidercorp.com/Application.aspx?App=FultonCountyGA&PageType=Search"
             )
             window_id = window.data.window_id
+            logger.info(f"Opened browser window: {window_id}")
             
             # Wait for page load
             await asyncio.sleep(5)
@@ -269,22 +271,25 @@ class CountyScraperAgent:
                     window_id=window_id,
                     element_description="click the agree button"
                 )
+                logger.info("Clicked terms and conditions agree button")
                 await asyncio.sleep(2)
             except Exception as e:
                 logger.info(f"Terms and conditions button not found or already accepted: {e}")
             
-            # Click on the address search field first
+            # Click on the address search field first to focus it
             try:
                 await self.airtop.windows.click(
                     session_id=session_id,
                     window_id=window_id,
                     element_description="click the enter address search bar"
                 )
+                logger.info("Clicked on search field to focus")
                 await asyncio.sleep(1)
             except Exception as e:
                 logger.info(f"Could not click search field first: {e}")
             
-            # Type normalized address into search field
+            # Type normalized address into search field and press Enter
+            # This takes us DIRECTLY to the property page - no search results page!
             await self.airtop.windows.type(
                 session_id=session_id,
                 window_id=window_id,
@@ -292,110 +297,192 @@ class CountyScraperAgent:
                 text=normalized_address,
                 press_enter_key=True
             )
+            logger.info(f"Typed '{normalized_address}' and pressed Enter")
             
-            # Wait for search results
+            # Wait for property page to load (it goes directly there!)
             await asyncio.sleep(8)
+            logger.info("Waiting for property page to load...")
             
-            # Click on the first search result to go to property details page
-            try:
-                await self.airtop.windows.click(
-                    session_id=session_id,
-                    window_id=window_id,
-                    element_description="first property result in search results"
-                )
-                await asyncio.sleep(5)  # Wait for property details page to load
-            except Exception as e:
-                logger.error(f"Failed to click on first search result: {e}")
-                raise Exception("No search results found for this address")
-            
-            # Extract data from the property details page
-            extraction_result = await self.airtop.windows.extract(
+            # NOW SCRAPE THE PROPERTY PAGE using scrape_content (not extract!)
+            # This matches your 8/13/25 notes where it scrapes the whole page
+            api_response = await self.airtop.windows.scrape_content(
                 session_id=session_id,
-                window_id=window_id
+                window_id=window_id,
+                time_threshold_seconds=60
             )
             
-            # Parse the extracted data
-            if extraction_result and hasattr(extraction_result, 'data') and extraction_result.data:
-                try:
-                    # Handle AiResponseEnvelope object structure
-                    if hasattr(extraction_result.data, 'content'):
-                        extracted_text = extraction_result.data.content
-                    elif hasattr(extraction_result.data, 'text'):
-                        extracted_text = extraction_result.data.text
-                    elif isinstance(extraction_result.data, str):
-                        extracted_text = extraction_result.data
-                    else:
-                        extracted_text = str(extraction_result.data)
+            if hasattr(api_response, "error") and api_response.error:
+                raise Exception(f"Failed to scrape content: {api_response.error}")
+            
+            # Extract the scraped text from the response
+            scraped_text = ""
+            if hasattr(api_response, 'data') and api_response.data:
+                if hasattr(api_response.data, 'model_response'):
+                    if hasattr(api_response.data.model_response, 'scraped_content'):
+                        scraped_text = api_response.data.model_response.scraped_content.text
+            
+            if not scraped_text:
+                raise Exception("No content scraped from property page")
+            
+            logger.info(f"Successfully scraped {len(scraped_text)} characters from property page")
+            
+            # Parse the scraped content to extract all property data
+            lines = scraped_text.split('\n')
+            
+            # Initialize variables
+            owner_name = "Not found"
+            owner_mailing_address = "Not found"
+            parcel_id = ""
+            property_class = ""
+            location_address = ""
+            year_built = ""
+            square_feet = ""
+            bedrooms = ""
+            bathrooms = ""
+            acres = ""
+            
+            # Parse each line
+            for i, line in enumerate(lines):
+                line = line.strip()
+                
+                # Extract Parcel Number (format: 09F270301230664)
+                if "Parcel Number" in line and i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if re.match(r'^[0-9A-Z]+$', next_line) and len(next_line) > 10:
+                        parcel_id = next_line
+                        logger.info(f"Found Parcel ID: {parcel_id}")
+                
+                # Extract Location Address (e.g., "5225 KOWETA RD SOUTH FULTON")
+                if "Location Address" in line and i + 2 < len(lines):
+                    addr_line1 = lines[i + 1].strip()
+                    addr_line2 = lines[i + 2].strip() if i + 2 < len(lines) else ""
+                    if addr_line1 and not any(x in addr_line1 for x in ["Legal", "Property Class"]):
+                        location_address = f"{addr_line1} {addr_line2}".strip()
+                        logger.info(f"Found Location Address: {location_address}")
+                
+                # Extract Property Class (e.g., "R3 - Residential Lots")
+                if "Property Class" in line and i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if next_line and ("R" in next_line or "Residential" in next_line):
+                        property_class = next_line
+                        logger.info(f"Found Property Class: {property_class}")
+                
+                # Extract Acres (e.g., "1.2479")
+                if line == "Acres" and i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if re.match(r'^\d+\.?\d*$', next_line):
+                        acres = next_line
+                        logger.info(f"Found Acres: {acres}")
+                
+                # Extract Year Built (e.g., "1960")
+                if "Year Built" in line and i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if next_line.isdigit() and len(next_line) == 4:
+                        year_built = next_line
+                        logger.info(f"Found Year Built: {year_built}")
+                
+                # Extract Square Feet (listed as "Res Sq Ft")
+                if "Res Sq Ft" in line and i + 1 < len(lines):
+                    next_line = lines[i + 1].strip().replace(",", "")
+                    if next_line.isdigit():
+                        square_feet = next_line
+                        logger.info(f"Found Square Feet: {square_feet}")
+                
+                # Extract Bedrooms
+                if line == "Bedrooms" and i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if next_line.isdigit():
+                        bedrooms = next_line
+                        logger.info(f"Found Bedrooms: {bedrooms}")
+                
+                # Extract Bathrooms (format: "2/1" for full/half)
+                if "Full Bath/Half Bath" in line and i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if "/" in next_line:
+                        bathrooms = next_line
+                        logger.info(f"Found Bathrooms: {bathrooms}")
+                
+                # CRITICAL: Extract Owner from Sales History Table
+                # The table has headers: Sale Date | Sale Price | ... | Grantee | Grantor | Recording
+                if "Sale Date" in line and "Grantee" in line and "Grantor" in line:
+                    logger.info(f"Found sales table header at line {i}")
                     
-                    # Parse the extracted text to find owner information
-                    owner_name = "Not found"
-                    owner_mailing_address = "Not found"
-                    parcel_id = "Not found"
-                    property_class = "Not found"
-                    
-                    # Look for owner information in the extracted text
-                    lines = extracted_text.split('\n')
-                    for i, line in enumerate(lines):
-                        line = line.strip()
+                    # Look at the next lines for actual sales data
+                    for j in range(i + 1, min(i + 15, len(lines))):
+                        sale_line = lines[j].strip()
                         
-                        # Look for owner name (usually after "Owner" or "Most Current Owner")
-                        if "OWNER" in line.upper() and "MOST CURRENT" not in line.upper():
-                            # Look for the next non-empty line as owner name
-                            for j in range(i + 1, min(i + 5, len(lines))):
-                                next_line = lines[j].strip()
-                                if next_line and not next_line.startswith('[') and len(next_line) > 2:
-                                    owner_name = next_line
-                                    break
+                        # Skip empty lines
+                        if not sale_line:
+                            continue
                         
-                        # Look for mailing address (usually after owner name)
-                        if owner_name != "Not found" and "PO BOX" in line.upper():
-                            owner_mailing_address = line
+                        # Stop if we hit another section
+                        if any(section in sale_line for section in ["Notices", "Property Record", "Comp Search"]):
                             break
-                        elif owner_name != "Not found" and any(word in line.upper() for word in ["ST", "AVE", "DR", "RD", "BLVD", "LN", "CT"]):
-                            owner_mailing_address = line
-                            break
                         
-                        # Look for parcel number
-                        if "PARCEL NUMBER" in line.upper():
-                            for j in range(i + 1, min(i + 3, len(lines))):
-                                next_line = lines[j].strip()
-                                if next_line and len(next_line) > 5:
-                                    parcel_id = next_line
+                        # Parse table row with pipe separators
+                        if "|" in sale_line:
+                            parts = [p.strip() for p in sale_line.split("|")]
+                            
+                            # Based on your 8/13/25 notes, the columns are:
+                            # 0: Sale Date, 1: Sale Price, 2: Instrument, 3: Deed Book, 4: Deed Page,
+                            # 5: Qualification, 6: Sales Validity, 7: Grantee (OWNER!), 8: Grantor, 9: Recording
+                            if len(parts) >= 9:
+                                grantee = parts[7].strip()
+                                
+                                # The most recent sale's Grantee is the current owner
+                                if grantee and grantee not in ["Grantee", "---", ""]:
+                                    owner_name = grantee
+                                    logger.info(f"*** FOUND OWNER from Grantee column: {owner_name} ***")
+                                    
+                                    # For your example property, this should find:
+                                    # "2015 3 IH2 BORROWER LP" as the most recent owner
                                     break
-                        
-                        # Look for property class
-                        if "PROPERTY CLASS" in line.upper():
-                            for j in range(i + 1, min(i + 3, len(lines))):
-                                next_line = lines[j].strip()
-                                if next_line and " - " in next_line:
-                                    property_class = next_line
-                                    break
-                    
-                    return {
-                        "owner_name": owner_name,
-                        "owner_mailing_address": owner_mailing_address,
-                        "parcel_id": parcel_id,
-                        "property_class": property_class,
-                        "source": "Fulton County Assessor (Airtop Step-by-Step)",
-                        "raw_extraction": extracted_text[:500] + "..." if len(extracted_text) > 500 else extracted_text  # Truncate for debugging
-                    }
-                except Exception as e:
-                    logger.error(f"Failed to parse extraction result: {e}")
-                    raise Exception("Failed to parse extracted data")
-            else:
-                raise Exception("No data extracted from property details page")
+            
+            # Use location address as mailing address if not found separately
+            if owner_mailing_address == "Not found" and location_address:
+                owner_mailing_address = location_address
+            
+            # Log what we extracted
+            logger.info(f"""
+            Extracted Property Data:
+            - Owner: {owner_name}
+            - Parcel: {parcel_id}
+            - Address: {location_address}
+            - Class: {property_class}
+            - Acres: {acres}
+            - Year Built: {year_built}
+            - Sq Ft: {square_feet}
+            - Beds/Baths: {bedrooms}/{bathrooms}
+            """)
+            
+            return {
+                "owner_name": owner_name,
+                "owner_mailing_address": owner_mailing_address,
+                "parcel_id": parcel_id,
+                "property_class": property_class,
+                "location_address": location_address,
+                "acres": acres,
+                "year_built": year_built,
+                "square_feet": square_feet,
+                "bedrooms": bedrooms,
+                "bathrooms": bathrooms,
+                "source": "Fulton County Assessor",
+                "scraped_at": datetime.now().isoformat()
+            }
             
         except Exception as e:
             error_msg = str(e)
+            logger.error(f"Fulton scraping error: {error_msg}")
+            logger.error(f"Error type: {type(e)}")
+            logger.error(traceback.format_exc())
+            
             if "limit" in error_msg.lower() or "session" in error_msg.lower():
-                logger.error(f"Airtop session limit reached: {error_msg}")
-                raise Exception("Airtop free plan session limit reached. Please upgrade your Airtop plan or wait for active sessions to expire.")
+                raise Exception("Airtop session limit reached. Please upgrade your Airtop plan or wait for active sessions to expire.")
             elif "timeout" in error_msg.lower():
-                logger.error(f"Airtop timeout: {error_msg}")
                 raise Exception("Airtop request timed out. Please try again.")
             else:
-                logger.error(f"Fulton scraping error: {error_msg}")
                 raise Exception(f"Failed to scrape Fulton County data: {error_msg}")
+                
         finally:
             if session:
                 try:
@@ -581,9 +668,9 @@ class ZillowScraperAgent:
                         matches = re.findall(pattern, extracted_text, re.IGNORECASE)
                         if matches:
                             # Take the first match and clean it
-                            price_str = matches[0].replace(',', '')
+                            price_str = matches[0].replace('$', '').replace(',', '')
                             try:
-                                listing_price = int(price_str)
+                                listing_price = int(float(price_str))
                                 break
                             except ValueError:
                                 continue
@@ -1049,4 +1136,3 @@ async def test_airtop():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-    
