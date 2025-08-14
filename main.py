@@ -20,6 +20,7 @@ import zipfile
 from pathlib import Path
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt
+import re
 
 # LangChain imports
 from langchain.agents import create_openai_functions_agent, AgentExecutor
@@ -270,6 +271,8 @@ class CountyScraperAgent:
                     if hasattr(api_response.data.model_response, 'scraped_content'):
                         scraped_text = api_response.data.model_response.scraped_content.text
             
+                        scraped_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', scraped_text)
+
             if not scraped_text:
                 raise Exception("No content scraped from property page")
             
