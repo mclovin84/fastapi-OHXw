@@ -247,9 +247,19 @@ class CountyScraperAgent:
             )
             logger.info(f"Typed '{normalized_address}' and pressed Enter")
             
-            # Wait for the details page to load - Schneider's site is slow to render
-            await asyncio.sleep(10)
+            # Wait for the details page content to appear by polling for "Most Current Owner"
             logger.info("Waiting for property details page to load...")
+            try:
+                await self.airtop.windows.page_query(
+                    session_id=session_id,
+                    window_id=window_id,
+                    prompt="Wait until the text 'Most Current Owner' appears on the page",
+                    configuration=PageQueryConfig(timeout_seconds=30)
+                )
+                logger.info("Property details page loaded successfully")
+            except Exception as e:
+                logger.warning(f"Timeout waiting for 'Most Current Owner' to appear: {e}")
+                # Continue anyway, might still have useful content
             
             # Scrape content from the property details page
             api_response = await self.airtop.windows.scrape_content(
