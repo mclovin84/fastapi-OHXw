@@ -237,15 +237,65 @@ class CountyScraperAgent:
             except Exception as e:
                 logger.info(f"Could not click search field: {e}")
             
-            # Type address and search
-            await self.airtop.windows.type(
-                session_id=session_id,
-                window_id=window_id,
-                element_description="click the enter address search bar",
-                text=normalized_address,
-                press_enter_key=True
-            )
-            logger.info(f"Typed '{normalized_address}' and pressed Enter")
+            # Try multiple address variations to find the property
+            address_variations = [
+                normalized_address,  # "1165 FAIR ST SW ATLANTA"
+                address.upper().replace(',', '').replace('STREET', 'ST'),  # Keep original format
+                address.split(',')[0].upper().strip(),  # Just street part: "1165 FAIR ST SW"
+                f"{address.split(',')[0].upper().strip()} ATLANTA",  # Street + city
+            ]
+            
+            search_successful = False
+            for i, variation in enumerate(address_variations):
+                logger.info(f"Trying address variation {i+1}: {variation!r}")
+                
+                # Clear the search field first
+                try:
+                    await self.airtop.windows.click(
+                        session_id=session_id,
+                        window_id=window_id,
+                        element_description="click the enter address search bar"
+                    )
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    logger.info(f"Could not click search field: {e}")
+                
+                # Type this variation and search
+                await self.airtop.windows.type(
+                    session_id=session_id,
+                    window_id=window_id,
+                    element_description="click the enter address search bar",
+                    text=variation,
+                    press_enter_key=True
+                )
+                logger.info(f"Typed '{variation}' and pressed Enter")
+                
+                # Wait a moment and check if we got results
+                await asyncio.sleep(3)
+                
+                # Quick scrape to check if we got "No results" message
+                quick_check = await self.airtop.windows.scrape_content(
+                    session_id=session_id,
+                    window_id=window_id,
+                    time_threshold_seconds=5
+                )
+                
+                if quick_check and hasattr(quick_check, 'data') and quick_check.data:
+                    if hasattr(quick_check.data, 'model_response'):
+                        if hasattr(quick_check.data.model_response, 'scraped_content'):
+                            check_text = quick_check.data.model_response.scraped_content.text
+                            if "No results match your search criteria" not in check_text:
+                                logger.info(f"Found results with variation: {variation}")
+                                search_successful = True
+                                break
+                            else:
+                                logger.info(f"No results with variation: {variation}")
+                
+                if i < len(address_variations) - 1:  # Not the last variation
+                    await asyncio.sleep(2)  # Wait before trying next variation
+            
+            if not search_successful:
+                logger.warning("All address variations failed, continuing with last attempt")
             
             # Wait for the details page content to appear by polling for "Most Current Owner"
             logger.info("Waiting for property details page to load...")
