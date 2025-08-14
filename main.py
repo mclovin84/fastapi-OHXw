@@ -302,14 +302,21 @@ class CountyScraperAgent:
                     if next_line and not any(x in next_line.lower() for x in ['http', 'www', 'click', 'here']):
                         owner_name = next_line
                         logger.info(f"Found Owner: {owner_name}")
+
+                
                 
                 # Look for Most Current Owner
-                if line == "Most Current Owner" and i + 1 < len(lines):
-                    owner_name = lines[i + 1].strip()
-                    logger.info(f"Found Most Current Owner: {owner_name}")
+                if line == "Most Current Owner":
+                # Check the next few lines for the actual owner name
+                for j in range(1, 4):
+                    if i + j < len(lines):
+                        potential_owner = lines[i + j].strip()
+                        if potential_owner and not any(x in potential_owner.lower() for x in 
+                ['http', 'www', 'click', 'here', 'owner info']):
+                                owner_name = potential_owner
+                                logger.info(f"Found Most Current Owner: '{owner_name}'")
+                                break
 
-                    logger.info(f"Next 3 lines after 'Most Current Owner': {[lines[i+j].strip()
-                    for j in range(1, 4) if i+j < len(lines)]}")
                     
                     # Get mailing address
                     address_parts = []
@@ -491,7 +498,6 @@ class CountyScraperAgent:
                     logger.error(f"Failed to terminate session: {str(e)}")
 
 # Zillow Scraper Agent  
-# Zillow Scraper Agent  
 class ZillowScraperAgent:
     def __init__(self):
         self.airtop = airtop_client
@@ -564,42 +570,90 @@ class ZillowScraperAgent:
             
             logger.info(f"Scraped {len(scraped_text)} characters from page")
             
-            # Parse for prices
+            # Parse for prices with priority for current listing
             listing_price = 0
             bedrooms = "Unknown"
             bathrooms = "Unknown" 
             sqft = "Unknown"
             
             if scraped_text:
-                # Look for price patterns (enhanced for Zillow)
-                price_patterns = [
-                    r'\$(\d{1,3},\d{3})',
-                    r'\$(\d{6})',
-                    r'(\d{1,3},\d{3})\s*USD',
-                    r'Price:\s*\$?(\d{1,3},\d{3})',
-                    r'Listed for:\s*\$?(\d{1,3},\d{3})',
-                    r'Zestimate:\s*\$?(\d{1,3},\d{3})',
+                # PRIORITY 1: Look for current listing price patterns first
+                current_listing_patterns = [
+                    r'Listed for sale\s*\$?(\d{1,3},\d{3})',  # "Listed for sale $295,000"
+                    r'Price:\s*\$(\d{1,3},\d{3})',           # Main price display
+                    r'Zestimate:\s*\$(\d{1,3},\d{3})',       # Zestimate
+                    r'\$(\d{1,3},\d{3})\s*Listed for sale', # Price before "Listed for sale"
                 ]
                 
-                prices_found = []
-                for pattern in price_patterns:
-                    matches = re.findall(pattern, scraped_text)
+                # Try current listing patterns first
+                for pattern in current_listing_patterns:
+                    matches = re.findall(pattern, scraped_text, re.IGNORECASE)
                     for match in matches:
                         price_str = match.replace(',', '').replace('$', '')
                         try:
                             price = int(price_str)
                             if 50000 <= price <= 2000000:
-                                prices_found.append(price)
-                                logger.info(f"Found price: ${price:,}")
+                                listing_price = price
+                                logger.info(f"Found CURRENT listing price: ${price:,}")
+                                break
                         except:
                             continue
+                    if listing_price > 0:
+                        break
                 
-                # Get most common price
-                if prices_found:
-                    from collections import Counter
-                    price_counts = Counter(prices_found)
-                    listing_price = price_counts.most_common(1)[0][0]
-                    logger.info(f"Selected price: ${listing_price:,}")
+                # PRIORITY 2: If no current listing found, look for most recent date
+                if listing_price == 0:
+                    # Look for dates and associated prices
+                    import re
+                    from datetime import datetime
+                    
+                    date_price_pattern = r'(\d{1,2}/\d{1,2}/\d{4})[^$]*\$(\d{1,3},\d{3})'
+                    date_matches = re.findall(date_price_pattern, scraped_text)
+                    
+                    if date_matches:
+                        # Parse dates and find most recent
+                        recent_price = None
+                        recent_date = None
+                        
+                        for date_str, price_str in date_matches:
+                            try:
+                                date_obj = datetime.strptime(date_str, '%m/%d/%Y')
+                                price = int(price_str.replace(',', ''))
+                                
+                                if 50000 <= price <= 2000000:
+                                    if recent_date is None or date_obj > recent_date:
+                                        recent_date = date_obj
+                                        recent_price = price
+                            except:
+                                continue
+                        
+                        if recent_price:
+                            listing_price = recent_price
+                            logger.info(f"Found most recent dated price: ${recent_price:,} from {recent_date.strftime('%m/%d/%Y')}")
+                
+                # PRIORITY 3: Fallback to general price patterns (avoid history prices)
+                if listing_price == 0:
+                    general_patterns = [
+                        r'\$(\d{1,3},\d{3})',
+                        r'(\d{1,3},\d{3})\s*USD',
+                    ]
+                    
+                    prices_found = []
+                    for pattern in general_patterns:
+                        matches = re.findall(pattern, scraped_text)
+                        for match in matches:
+                            price_str = match.replace(',', '').replace('$', '')
+                            try:
+                                price = int(price_str)
+                                if 50000 <= price <= 2000000:
+                                    prices_found.append(price)
+                            except:
+                                continue
+                    
+                    # Take the highest price (usually current listing)
+                    if prices_found:
+                        listing_price = max(prices_found)
+                        logger.info(f"Selected highest price as current listing: ${listing_price:,}")
                 
                 # Look for property details (enhanced for Zillow)
                 bed_match = re.search(r'(\d+)\s*(?:bed|bedroom|bd|bds)', scraped_text, re.IGNORECASE)
@@ -626,7 +680,7 @@ class ZillowScraperAgent:
                     "bathrooms": bathrooms,
                     "sqft": sqft
                 },
-                "source": "Zillow via Google" if listing_price > 0 else "Default"
+                "source": "Zillow Current Listing" if listing_price > 0 else "Default"
             }
             
         except asyncio.TimeoutError:
@@ -660,6 +714,7 @@ class ZillowScraperAgent:
                     logger.info(f"Terminated price scraper session")
                 except Exception as e:
                     logger.error(f"Failed to terminate session: {str(e)}")
+
 
 
 # LOI Calculator
