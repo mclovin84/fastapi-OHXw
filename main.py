@@ -254,7 +254,7 @@ class CountyScraperAgent:
                     session_id=session_id,
                     window_id=window_id,
                     prompt="Wait until the text 'Most Current Owner' appears on the page",
-                    configuration=PageQueryConfig(timeout_seconds=30)
+                    configuration=PageQueryConfig()
                 )
                 logger.info("Property details page loaded successfully")
             except Exception as e:
