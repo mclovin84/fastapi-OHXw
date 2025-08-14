@@ -247,23 +247,8 @@ class CountyScraperAgent:
             )
             logger.info(f"Typed '{normalized_address}' and pressed Enter")
             
-            # Wait for search results
-            await asyncio.sleep(5)
-            logger.info("Waiting for search results...")
-            
-            # Click the first property result link to get to the details page
-            try:
-                await self.airtop.windows.click(
-                    session_id=session_id,
-                    window_id=window_id,
-                    element_description="click the first property result link"
-                )
-                logger.info("Clicked property result link")
-                await asyncio.sleep(5)  # Wait for property details page to load
-            except Exception as e:
-                logger.warning(f"Could not click property result link: {e}")
-                # Continue anyway, might be on the details page already
-            
+            # Wait for the details page to load - Schneider's site is slow to render
+            await asyncio.sleep(10)
             logger.info("Waiting for property details page to load...")
             
             # Scrape content from the property details page
