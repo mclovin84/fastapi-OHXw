@@ -200,7 +200,7 @@ class CountyScraperAgent:
             config = SessionConfigV1(timeout_minutes=10)
             session = await asyncio.wait_for(
                 self.airtop.sessions.create(configuration=config),
-                timeout=15.0
+                timeout=45.0
             )
             session_id = session.data.id
             logger.info(f"Created session: {session_id}")
@@ -419,7 +419,7 @@ class CountyScraperAgent:
             config = SessionConfigV1(timeout_minutes=5)
             session = await asyncio.wait_for(
                 self.airtop.sessions.create(configuration=config),
-                timeout=15.0
+                timeout=45.0
             )
             session_id = session.data.id
             
@@ -603,9 +603,6 @@ class ZillowScraperAgent:
                 # PRIORITY 2: If no current listing found, look for most recent date
                 if listing_price == 0:
                     # Look for dates and associated prices
-                    import re
-                    from datetime import datetime
-                    
                     date_price_pattern = r'(\d{1,2}/\d{1,2}/\d{4})[^$]*\$(\d{1,3},\d{3})'
                     date_matches = re.findall(date_price_pattern, scraped_text)
                     
