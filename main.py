@@ -307,6 +307,9 @@ class CountyScraperAgent:
                 if line == "Most Current Owner" and i + 1 < len(lines):
                     owner_name = lines[i + 1].strip()
                     logger.info(f"Found Most Current Owner: {owner_name}")
+
+                    logger.info(f"Next 3 lines after 'Most Current Owner': {[lines[i+j].strip()
+                    for j in range(1, 4) if i+j < len(lines)]}")
                     
                     # Get mailing address
                     address_parts = []
@@ -488,12 +491,13 @@ class CountyScraperAgent:
                     logger.error(f"Failed to terminate session: {str(e)}")
 
 # Zillow Scraper Agent  
+# Zillow Scraper Agent  
 class ZillowScraperAgent:
     def __init__(self):
         self.airtop = airtop_client
         
     async def get_listing_price(self, address: str) -> Dict:
-        """Scrapes property price using Google search"""
+        """Scrapes property price by searching Google and clicking Zillow link"""
         if not self.airtop:
             raise Exception("Airtop client not available - AIRTOP_API_KEY required")
             
@@ -518,8 +522,8 @@ class ZillowScraperAgent:
             
             await asyncio.sleep(2)
             
-            # Search for property price
-            search_query = f"{address} price"
+            # Search for property price with zillow
+            search_query = f"{address} zillow price"
             await self.airtop.windows.type(
                 session_id=session_id,
                 window_id=window_id,
@@ -531,7 +535,20 @@ class ZillowScraperAgent:
             
             await asyncio.sleep(3)
             
-            # Scrape search results
+            # Try to click on Zillow link from search results
+            try:
+                await self.airtop.windows.click(
+                    session_id=session_id,
+                    window_id=window_id,
+                    element_description="click the first Zillow.com link in search results"
+                )
+                logger.info("Clicked Zillow link from search results")
+                await asyncio.sleep(4)  # Wait for Zillow page to load
+            except Exception as e:
+                logger.info(f"Could not click Zillow link: {e}")
+                # Continue with Google search results if Zillow click fails
+            
+            # Scrape content (now from Zillow page if click worked, otherwise Google results)
             scrape_result = await self.airtop.windows.scrape_content(
                 session_id=session_id,
                 window_id=window_id,
@@ -545,7 +562,7 @@ class ZillowScraperAgent:
                     if hasattr(scrape_result.data.model_response, 'scraped_content'):
                         scraped_text = scrape_result.data.model_response.scraped_content.text
             
-            logger.info(f"Scraped {len(scraped_text)} characters from Google")
+            logger.info(f"Scraped {len(scraped_text)} characters from page")
             
             # Parse for prices
             listing_price = 0
@@ -554,12 +571,14 @@ class ZillowScraperAgent:
             sqft = "Unknown"
             
             if scraped_text:
-                # Look for price patterns
+                # Look for price patterns (enhanced for Zillow)
                 price_patterns = [
                     r'\$(\d{1,3},\d{3})',
                     r'\$(\d{6})',
                     r'(\d{1,3},\d{3})\s*USD',
                     r'Price:\s*\$?(\d{1,3},\d{3})',
+                    r'Listed for:\s*\$?(\d{1,3},\d{3})',
+                    r'Zestimate:\s*\$?(\d{1,3},\d{3})',
                 ]
                 
                 prices_found = []
@@ -582,12 +601,12 @@ class ZillowScraperAgent:
                     listing_price = price_counts.most_common(1)[0][0]
                     logger.info(f"Selected price: ${listing_price:,}")
                 
-                # Look for property details
-                bed_match = re.search(r'(\d+)\s*(?:bed|bedroom|bd)', scraped_text, re.IGNORECASE)
+                # Look for property details (enhanced for Zillow)
+                bed_match = re.search(r'(\d+)\s*(?:bed|bedroom|bd|bds)', scraped_text, re.IGNORECASE)
                 if bed_match:
                     bedrooms = bed_match.group(1)
                 
-                bath_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:bath|bathroom|ba)', scraped_text, re.IGNORECASE)
+                bath_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:bath|bathroom|ba|baths)', scraped_text, re.IGNORECASE)
                 if bath_match:
                     bathrooms = bath_match.group(1)
                 
@@ -607,7 +626,7 @@ class ZillowScraperAgent:
                     "bathrooms": bathrooms,
                     "sqft": sqft
                 },
-                "source": "Google Search"
+                "source": "Zillow via Google" if listing_price > 0 else "Default"
             }
             
         except asyncio.TimeoutError:
@@ -641,6 +660,7 @@ class ZillowScraperAgent:
                     logger.info(f"Terminated price scraper session")
                 except Exception as e:
                     logger.error(f"Failed to terminate session: {str(e)}")
+
 
 # LOI Calculator
 class LOICalculator:
