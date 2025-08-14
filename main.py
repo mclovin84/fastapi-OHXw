@@ -270,11 +270,11 @@ class CountyScraperAgent:
                 if hasattr(api_response.data, 'model_response'):
                     if hasattr(api_response.data.model_response, 'scraped_content'):
                         scraped_text = api_response.data.model_response.scraped_content.text
-            
-                        scraped_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', scraped_text)
-
+                                    
             if not scraped_text:
                 raise Exception("No content scraped from property page")
+
+            scraped_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', scraped_text)
             
             logger.info(f"Successfully scraped {len(scraped_text)} characters")
             
