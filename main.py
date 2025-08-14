@@ -888,12 +888,13 @@ async def scrape_property(address: str) -> PropertyData:
     
     price_task = zillow_scraper.get_listing_price(address)
     
-    # Run both scrapers in parallel
+    # Run scrapers sequentially to avoid session limits
     try:
-        owner_info, price_info = await asyncio.wait_for(
-            asyncio.gather(owner_task, price_task),
-            timeout=90.0  # Increased timeout
-        )
+        logger.info("Starting owner scraping...")
+        owner_info = await owner_task
+        logger.info("Owner scraping completed, starting price scraping...")
+        price_info = await price_task
+        logger.info("Price scraping completed")
     except asyncio.TimeoutError:
         raise Exception("Scraping timed out after 90 seconds. Please try again.")
     
