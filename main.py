@@ -306,31 +306,30 @@ class CountyScraperAgent:
                 
                 
                 # Look for Most Current Owner
-                if line == "Most Current Owner":
-                # Check the next few lines for the actual owner name
-                for j in range(1, 4):
-                    if i + j < len(lines):
-                        potential_owner = lines[i + j].strip()
-                        if potential_owner and not any(x in potential_owner.lower() for x in 
-                ['http', 'www', 'click', 'here', 'owner info']):
-                                owner_name = potential_owner
-                                logger.info(f"Found Most Current Owner: '{owner_name}'")
-                                break
+if line == "Most Current Owner":
+    # Check the next few lines for the actual owner name
+    for j in range(1, 4):
+        if i + j < len(lines):
+            potential_owner = lines[i + j].strip()
+            if potential_owner and not any(x in potential_owner.lower() for x in ['http', 'www', 'click', 'here', 'owner info']):
+                owner_name = potential_owner
+                logger.info(f"Found Most Current Owner: '{owner_name}'")
+                break
+    
+    # Get mailing address
+    address_parts = []
+    for j in range(2, 5):
+        if i + j < len(lines):
+            addr_line = lines[i + j].strip()
+            if any(header in addr_line for header in ["Land", "Owner Info", "Property", "Summary"]):
+                break
+            if addr_line:
+                address_parts.append(addr_line)
+    
+    if address_parts:
+        owner_mailing_address = " ".join(address_parts)
+        logger.info(f"Found Mailing Address: {owner_mailing_address}")
 
-                    
-                    # Get mailing address
-                    address_parts = []
-                    for j in range(2, 5):
-                        if i + j < len(lines):
-                            addr_line = lines[i + j].strip()
-                            if any(header in addr_line for header in ["Land", "Owner Info", "Property", "Summary"]):
-                                break
-                            if addr_line:
-                                address_parts.append(addr_line)
-                    
-                    if address_parts:
-                        owner_mailing_address = " ".join(address_parts)
-                        logger.info(f"Found Mailing Address: {owner_mailing_address}")
                 
                 # Extract other fields
                 if "Parcel Number" in line and i + 1 < len(lines):
