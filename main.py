@@ -162,19 +162,16 @@ def normalize_address_for_fulton(address: str) -> str:
         pattern = r'\b' + escaped_long_form + r'\b'
         normalized = re.sub(pattern, abbr, normalized)
 
-    # Remove common Georgia cities and state
+    # Only remove state and ZIP codes, keep cities
     parts = normalized.split()
     filtered_parts = []
 
     for part in parts:
-        if part in ['ATLANTA', 'AUGUSTA', 'COLUMBUS', 'MACON', 'SAVANNAH', 
-                    'ATHENS', 'ALBANY', 'WARNER', 'ROBINS', 'VALDOSTA', 'GA', 
-                    'GEORGIA', 'FAIRBURN', 'PALMETTO', 'SOUTH', 'FULTON']:
+        # Only filter out state and zip codes
+        if part in ['GA', 'GEORGIA']:
             break
-        
-        if re.match(r'^\d{5}$', part):
+        if re.match(r'^\d{5}$', part):  # ZIP code
             break
-        
         if part.strip():
             filtered_parts.append(part)
 
@@ -194,7 +191,7 @@ class CountyScraperAgent:
         try:
             # Normalize address for search
             normalized_address = normalize_address_for_fulton(address)
-            logger.info(f"Normalized address: {address} -> {normalized_address}")
+            logger.info(f"Raw address: {address!r}, Normalized: {normalized_address!r}")
             
             # Create session with timeout
             config = SessionConfigV1(timeout_minutes=10)
@@ -278,8 +275,13 @@ class CountyScraperAgent:
             
             logger.info(f"Successfully scraped {len(scraped_text)} characters")
             
-            # Parse the scraped content
+            # Debug: Log first 20 lines of scraped content
             lines = scraped_text.split('\n')
+            logger.info("First 20 lines of scraped content:")
+            for idx, ln in enumerate(lines[:20]):
+                logger.info(f"Line {idx}: {ln!r}")
+            
+            # Parse the scraped content
             
             # Initialize variables
             owner_name = "Not found"
@@ -305,30 +307,39 @@ class CountyScraperAgent:
 
                 
                 
-                # Look for Most Current Owner
-                if line == "Most Current Owner":
+                # Look for Most Current Owner (more flexible matching)
+                if "Most Current Owner" in line:
                     # Check the next few lines for the actual owner name
-                    for j in range(1, 4):
+                    for j in range(1, 6):  # Increased range
                         if i + j < len(lines):
                             potential_owner = lines[i + j].strip()
-                            if potential_owner and not any(x in potential_owner.lower() for x in ['http', 'www', 'click', 'here', 'owner info']):
+                            if (potential_owner and 
+                                len(potential_owner) > 3 and  # Must be longer than 3 chars
+                                not any(x in potential_owner.lower() for x in ['http', 'www', 'click', 'here', 'owner info', 'updated', 'last']) and
+                                not potential_owner.startswith('[')):  # Skip markdown links
                                 owner_name = potential_owner
                                 logger.info(f"Found Most Current Owner: '{owner_name}'")
+                                
+                                # Get mailing address from subsequent lines
+                                address_parts = []
+                                logger.info(f"Looking for mailing address starting from line {i + j + 1}")
+                                for k in range(j + 1, j + 4):  # Look 2-3 lines after owner name
+                                    if i + k < len(lines):
+                                        addr_line = lines[i + k].strip()
+                                        logger.info(f"Checking line {i + k}: {addr_line!r}")
+                                        if any(header in addr_line for header in ["Land", "Owner Info", "Property", "Summary", "Last Updated"]):
+                                            logger.info(f"Stopping at header: {addr_line}")
+                                            break
+                                        if addr_line and len(addr_line) > 2:
+                                            address_parts.append(addr_line)
+                                            logger.info(f"Added to address: {addr_line}")
+                                
+                                if address_parts:
+                                    owner_mailing_address = " ".join(address_parts)
+                                    logger.info(f"Found Mailing Address: {owner_mailing_address}")
+                                else:
+                                    logger.warning("No mailing address parts found")
                                 break
-                    
-                    # Get mailing address
-                    address_parts = []
-                    for j in range(2, 5):
-                        if i + j < len(lines):
-                            addr_line = lines[i + j].strip()
-                            if any(header in addr_line for header in ["Land", "Owner Info", "Property", "Summary"]):
-                                break
-                            if addr_line:
-                                address_parts.append(addr_line)
-                    
-                    if address_parts:
-                        owner_mailing_address = " ".join(address_parts)
-                        logger.info(f"Found Mailing Address: {owner_mailing_address}")
 
                 
                 # Extract other fields
